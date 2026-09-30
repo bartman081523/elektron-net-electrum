@@ -616,6 +616,10 @@
     "CointraderMonitor": [
         "BRL"
     ],
+    "ElektronRegistry": [
+        "EUR",
+        "USD"
+    ],
     "Kraken": [
         "CAD",
         "EUR",

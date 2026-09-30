@@ -386,6 +386,44 @@ class BlockchainInfo(ExchangeBase):
         return dict([(r, to_decimal(json[r]['15m'])) for r in json])
 
 
+class ElektronRegistry(ExchangeBase):
+    """Project-published reference rate for ELEK, no exchange involved.
+
+    ELEK has no market anywhere, so the Elektron Net registry publishes a
+    project-defined reference rate as rate.json (schema documented in the
+    registry repo's README - flat {"USD": ..., "EUR": ...} or a
+    {"ticker": ..., "updated_unix": ..., "rates": {...}} wrapper). This
+    provider and the electrs FX module read the same file, so wallet and
+    server display the same rate. There is no rate history for this source;
+    the base class already returns [] for history_ccys().
+    """
+
+    REGISTRY_HOST = 'raw.githubusercontent.com'
+    # bartman-fork URL while testing on our own infra; switch this back to
+    # '/kutlusoy/elektron-net-registry/main/rate.json' once that repo's main
+    # carries rate.json (same change in electrs.toml fx_rate_url).
+    REGISTRY_PATH = '/bartman081523/elektron-net-registry/main/rate.json'
+
+    async def get_rates(self, ccy: str) -> Mapping[str, Optional[Decimal]]:
+        json = await self.get_json(self.REGISTRY_HOST, self.REGISTRY_PATH)
+        rates = json.get('rates', json) if isinstance(json, dict) else None
+        if not isinstance(rates, dict):
+            raise Exception(f"rate.json has no rates object: {type(rates)}")
+        out = {}  # type: Dict[str, Optional[Decimal]]
+        for fiat_ccy, rate in rates.items():
+            if not (isinstance(fiat_ccy, str) and len(fiat_ccy) == 3):
+                continue
+            try:
+                d = to_decimal(rate)
+            except Exception:
+                continue  # unparsable value -> skip, like electrs does
+            if d.is_finite() and d > 0:
+                out[fiat_ccy.upper()] = d
+        if not out:
+            raise Exception("rate.json contains no valid rates")
+        return out
+
+
 class Bylls(ExchangeBase):
 
     async def get_rates(self, ccy):
