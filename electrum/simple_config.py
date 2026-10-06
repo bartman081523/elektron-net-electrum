@@ -711,13 +711,15 @@ If disabled, the full wallet file is written to disk for every change. Experimen
     )
 
     # Elektron Net fork defaults: fiat display on out of the box, fed by the
-    # project registry's rate.json (no exchange exists; see ElektronRegistry
-    # in exchange_rate.py). The upstream default (CoinGecko, off) cannot ever
-    # show an ELEK rate - there is no listing, and the fork already guards
-    # CoinGecko against BTC-mislabeled rates.
+    # connected electrs server (see ElektronElectrs in exchange_rate.py) which
+    # itself renders the project's rate chain (orderbook > registry rate.json
+    # > cost floor). The upstream default (CoinGecko, off) cannot ever show an
+    # ELEK rate - there is no listing, and the fork already guards CoinGecko
+    # against BTC-mislabeled rates. ElektronRegistry is the fallback for
+    # wallets not connected to a project electrs.
     FX_USE_EXCHANGE_RATE = ConfigVar('use_exchange_rate', default=True, type_=bool)
     FX_CURRENCY = ConfigVar('currency', default='EUR', type_=str)
-    FX_EXCHANGE = ConfigVar('use_exchange', default='ElektronRegistry', type_=str)  # no rate history available from this source
+    FX_EXCHANGE = ConfigVar('use_exchange', default='ElektronElectrs', type_=str)  # no rate history available from this source
     FX_HISTORY_RATES = ConfigVar(
         'history_rates', default=False, type_=bool,
         short_desc=lambda: _('Download historical rates'),

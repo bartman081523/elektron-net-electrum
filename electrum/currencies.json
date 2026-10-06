@@ -616,6 +616,10 @@
     "CointraderMonitor": [
         "BRL"
     ],
+    "ElektronElectrs": [
+        "EUR",
+        "USD"
+    ],
     "ElektronRegistry": [
         "EUR",
         "USD"

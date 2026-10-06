@@ -424,6 +424,49 @@ class ElektronRegistry(ExchangeBase):
         return out
 
 
+class ElektronElectrs(ExchangeBase):
+    """Rate served by the connected electrs server ("blockchain.fx.rates").
+
+    The Elektron Net electrs fork computes one ELEK rate per refresh cycle
+    and renders it into its Electrum banner, the "blockchain.fx.rates" RPC,
+    its snapshot files and its optional FX HTTP endpoint. This provider asks
+    the server the wallet is connected to, so the fiat display follows the
+    server's published rate chain: market orderbook price > registry
+    rate.json > mining cost floor. Requires a project electrs server; other
+    servers do not implement the method (keep ElektronRegistry in config for
+    those). There is no rate history for this source; the base class already
+    returns [] for history_ccys().
+
+    The reply carries keys like "usd"/"eur" (nullable) plus metadata keys
+    ("ticker", "source", ...); we pick any 3-letter alphabetic key with a
+    positive parsable value, mirroring how electrs treats the rate file.
+    """
+
+    async def get_rates(self, ccy: str) -> Mapping[str, Optional[Decimal]]:
+        network = Network.get_instance()
+        if network is None:
+            raise Exception("no network daemon: cannot request server FX rates")
+        if not network.is_connected():
+            raise Exception("not connected to a server: cannot request FX rates")
+        reply = await network.interface.session.send_request(
+            'blockchain.fx.rates', [], timeout=10)
+        if not isinstance(reply, dict):
+            raise Exception(f"blockchain.fx.rates returned {type(reply)}, not an object")
+        out = {}  # type: Dict[str, Optional[Decimal]]
+        for fiat_ccy, rate in reply.items():
+            if not (isinstance(fiat_ccy, str) and len(fiat_ccy) == 3 and fiat_ccy.isalpha()):
+                continue
+            try:
+                d = to_decimal(rate)
+            except Exception:
+                continue  # unparsable value -> skip, like electrs does
+            if d.is_finite() and d > 0:
+                out[fiat_ccy.upper()] = d
+        if not out:
+            raise Exception("server has no usable FX rate yet")
+        return out
+
+
 class Bylls(ExchangeBase):
 
     async def get_rates(self, ccy):
