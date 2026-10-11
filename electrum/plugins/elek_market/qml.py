@@ -46,17 +46,17 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtProperty(str)
     def endpoint(self):
-        return self.plugin().endpoint
+        return self.plugin.endpoint
 
     @endpoint.setter
     def endpoint(self, value):
-        self.plugin().set_endpoint(value)
+        self.plugin.set_endpoint(value)
 
     @pyqtSlot()
     def refresh_rates(self):
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
-        api = self.plugin().get_api()
+        api = self.plugin.get_api()
         fut = _asyncio.run_coroutine_threadsafe(api.get_rates_raw(), get_asyncio_loop())
         try:
             self._rates = fut.result(timeout=30)
@@ -72,7 +72,7 @@ class QMarketSignalObject(PluginQObject):
     def refresh_orderbook(self, base: str, rel: str):
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
-        api = self.plugin().get_api()
+        api = self.plugin.get_api()
         fut = _asyncio.run_coroutine_threadsafe(api.get_orderbook(base, rel), get_asyncio_loop())
         try:
             ob = fut.result(timeout=30)
@@ -94,7 +94,7 @@ class QMarketSignalObject(PluginQObject):
         import json as _json
         import aiohttp
 
-        cfg = self.plugin().config
+        cfg = self.plugin.config
         swap_endpoint = cfg.get('plugins.elek_market.swap_endpoint')
         swap_userpass = cfg.get('plugins.elek_market.swap_userpass')
 
@@ -106,7 +106,7 @@ class QMarketSignalObject(PluginQObject):
         else:
             payload = {"method": "buy", "base": base, "rel": rel,
                        "price": price, "volume": volume}
-            url = self.plugin().endpoint.rstrip("/") + "/rpc"
+            url = self.plugin.endpoint.rstrip("/") + "/rpc"
         timeout = aiohttp.ClientTimeout(total=180)
 
         async def _do():
@@ -142,6 +142,9 @@ class Plugin(ElekMarketBase):
     def init_qml(self, app: 'ElectrumQmlApplication'):
         self._app = app
         # QML-binding singleton; parent into the QObject tree to keep alive
-        self._so = QMarketSignalObject(self, app.engine)
-        self._so.setParent(app.engine)
+        self._so = QMarketSignalObject(self, app)
+        self._so.setParent(app)
+        self.so = self._so  # QEAppController.plugin() expects has-property 'so'
         app.engine.rootContext().setContextProperty('MarketPlugin', self._so)
+        self.logger.info('MarketPlugin context property registered')
+        self.logger.info('MarketPlugin context property registered')
