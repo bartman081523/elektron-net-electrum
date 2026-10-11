@@ -13,10 +13,12 @@ from PyQt6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QTreeWidget,
                              QTreeWidgetItem, QVBoxLayout)
 
+import asyncio
+
 from electrum.gui.qt.util import Buttons, CancelButton, OkButton, WindowModalDialog
 from electrum.i18n import _
 from electrum.plugin import hook
-from electrum.util import run_coroutine_threadsafe
+from electrum.util import get_asyncio_loop
 
 from . import Plugin as ElekMarketBase
 from .market_api import MarketApiError
@@ -81,8 +83,8 @@ class MarketDialog(QDialog):
     @pyqtSlot()
     def refresh(self):
         pair = self.pair_box.currentData() or ("tELEK", "tBTC")
-        run_coroutine_threadsafe(self._refresh_async(*pair),
-                                 self.window.asyncio_loop)
+        asyncio.run_coroutine_threadsafe(
+            self._refresh_async(*pair), get_asyncio_loop())
 
     async def _refresh_async(self, base: str, rel: str):
         try:
