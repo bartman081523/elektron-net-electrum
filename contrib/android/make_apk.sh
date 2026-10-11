@@ -31,6 +31,17 @@ pushd "$CONTRIB_ANDROID"
 
 info "apk building phase starts."
 
+# Standalone side-by-side build of the Elektron Market flavor (campaign #61 B2):
+# a distinct application id so this APK does NOT clash with an already
+# installed wallet (data dir, platform package tracking, launcher entry all
+# derive from it). Changing APP_PACKAGE_NAME requires a clean .buildozer/
+# rebuild; changing APP_PACKAGE_DOMAIN is the supported path, so we do that.
+#
+#   package id  : M2101K9G-installed market variant = org.elektronnet.market.ElektronElectrum
+#   data dir    : /data/user/0/org.elektronnet.market.ElektronElectrum  (isolated)
+#   app label   : "Elektron Electrum Market" (set via buildozer spec title)
+export APP_PACKAGE_DOMAIN=org.elektronnet.market
+
 # Uncomment and change below to set a custom android package id,
 # e.g. to allow simultaneous mainnet and testnet installs of the apk.
 # defaults:

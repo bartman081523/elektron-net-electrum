@@ -1,7 +1,7 @@
 [app]
 
 # (str) Title of your application
-title = Elektron Electrum
+title = Elektron Electrum Market
 
 # (str) Package name
 package.name = ElektronElectrum
