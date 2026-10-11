@@ -37,10 +37,12 @@ class Plugin(BasePlugin):
 
     @property
     def endpoint(self) -> str:
-        return self.config.ELEK_MARKET_ENDPOINT.get()
+        # SimpleConfig ConfigVars are plain property descriptors:
+        # instance access yields the str value directly (no .get()).
+        return self.config.ELEK_MARKET_ENDPOINT or ""
 
     def set_endpoint(self, endpoint: str):
-        self.config.ELEK_MARKET_ENDPOINT.set(endpoint.strip(), save=True)
+        self.config.ELEK_MARKET_ENDPOINT = endpoint.strip()
         if self._api is not None:
             self._api.set_endpoint(self.endpoint)
 
@@ -51,13 +53,13 @@ class Plugin(BasePlugin):
 
     @property
     def pair(self) -> tuple:
-        base = self.config.ELEK_MARKET_BASE.get()
-        rel = self.config.ELEK_MARKET_REL.get()
+        base = self.config.ELEK_MARKET_BASE
+        rel = self.config.ELEK_MARKET_REL
         return base, rel
 
     def set_pair(self, base: str, rel: str):
-        self.config.ELEK_MARKET_BASE.set(base, save=True)
-        self.config.ELEK_MARKET_REL.set(rel, save=True)
+        self.config.ELEK_MARKET_BASE = base
+        self.config.ELEK_MARKET_REL = rel
 
     def is_available(self) -> bool:
         # network-independent display; errors are reported in the UI
