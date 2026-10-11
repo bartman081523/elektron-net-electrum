@@ -236,7 +236,11 @@ class BitcoinTestnet(AbstractNet):
     ADDRTYPE_P2SH = 196
     SEGWIT_HRP = "tb"
     BOLT11_HRP = SEGWIT_HRP
-    GENESIS = "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
+    # Elektron Net testnet genesis (the "elektron testnet" chain) — matches
+    # the fork's elektrond -testnet self-contained testnet as the wallet's
+    # self-spins in docker via MM_LOCAL_TESTNET=1 (genesis check in
+    # docker/start_testnet_infra.sh: GENESIS="00000078233832…c73e4f").
+    GENESIS = "00000078233832d6ba39d7693ad96e9e6a8bc869a5f49cfaf4760f2c73c73e4f"
     DEFAULT_PORTS = {'t': '51001', 's': '51002'}
 
     XPRV_HEADERS = {
