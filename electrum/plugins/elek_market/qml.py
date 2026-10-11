@@ -98,6 +98,12 @@ class QMarketSignalObject(PluginQObject):
         swap_endpoint = cfg.get('plugins.elek_market.swap_endpoint')
         swap_userpass = cfg.get('plugins.elek_market.swap_userpass')
 
+        # The QML pair is labelled (base=tELEK, rel=tBTC) as a user-market view.
+        # A taker BUY in kdf legacy semantics buys `base` paying `rel`. The user
+        # wants to trade tELEK -> tBTC, i.e. buy(base=tBTC, rel=tELEK).
+        if base == 'tELEK' and rel == 'tBTC':
+            base, rel = rel, base
+
         if swap_endpoint:
             payload = {"userpass": swap_userpass or "",
                        "method": "buy", "base": base, "rel": rel,
