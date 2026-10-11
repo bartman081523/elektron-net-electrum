@@ -5,10 +5,11 @@
 # No custody, no swaps: this module never sends seeds, private keys, or
 # money-moving RPCs. Trading over the market is out of scope (M2: optional).
 #
+import asyncio
+import os
 from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtCore import pyqtSlot
-from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QTreeWidget,
                              QTreeWidgetItem, QVBoxLayout)
@@ -121,20 +122,25 @@ class MarketDialog(QDialog):
 
 
 class Plugin(ElekMarketBase):
-    """Qt extension of the base plugin: toolbar menu + dialog."""
+    """Qt extension of the base plugin: menu entry + dialog."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._dialog: Optional[MarketDialog] = None
 
     @hook
-    def create_window(self, window: 'ElectrumWindow'):
-        tools_menu = getattr(window, "tools_menu", None)
-        if tools_menu is None:
-            return
-        action = QAction(_("Elektron Market..."), window)
-        action.triggered.connect(lambda: self.open_dialog(window))
-        tools_menu.addAction(action)
+    def init_menubar(self, window: 'ElectrumWindow'):
+        from electrum.gui.qt.util import read_QIcon_from_bytes
+        try:
+            icon = read_QIcon_from_bytes(
+                open(os.path.join(os.path.dirname(__file__), 'market.png'),
+                     'rb').read())
+        except (FileNotFoundError, OSError):
+            icon = None
+        action = window.wallet_menu.addAction(
+            _("&Elektron Market..."), lambda: self.open_dialog(window))
+        if icon is not None:
+            action.setIcon(icon)
 
     def open_dialog(self, window: 'ElectrumWindow'):
         if self._dialog is not None and self._dialog.isVisible():
