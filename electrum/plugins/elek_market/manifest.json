@@ -1,0 +1,8 @@
+{
+  "name": "elek_market",
+  "fullname": "Elektron Market API",
+  "description": "Read-only client for the p2p Market API: ELEK rates (electrs FX snapshot) and the live orderbook, against a self-hosted marketplace (docker container or Render). Your wallet keys never leave Electrum; trading is NOT part of this plugin.",
+  "author": "bartman081523 (Elektron Net)",
+  "available_for": ["qt"],
+  "version": "0.1.0"
+}
