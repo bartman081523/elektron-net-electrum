@@ -54,9 +54,10 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot()
     def refresh_rates(self):
-        from electrum.util import run_coroutine_threadsafe, get_asyncio_loop
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
         api = self.plugin().get_api()
-        fut = run_coroutine_threadsafe(api.get_rates_raw(), get_asyncio_loop())
+        fut = _asyncio.run_coroutine_threadsafe(api.get_rates_raw(), get_asyncio_loop())
         try:
             self._rates = fut.result(timeout=30)
             self.ratesReady.emit()
@@ -69,9 +70,10 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot(str, str)
     def refresh_orderbook(self, base: str, rel: str):
-        from electrum.util import run_coroutine_threadsafe, get_asyncio_loop
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
         api = self.plugin().get_api()
-        fut = run_coroutine_threadsafe(api.get_orderbook(base, rel), get_asyncio_loop())
+        fut = _asyncio.run_coroutine_threadsafe(api.get_orderbook(base, rel), get_asyncio_loop())
         try:
             ob = fut.result(timeout=30)
             self._book = api.parse_orderbook(ob)
@@ -115,8 +117,9 @@ class QMarketSignalObject(PluginQObject):
                         raise MarketApiError(reply.status, body)
                     return _json.loads(body)
 
-        from electrum.util import run_coroutine_threadsafe, get_asyncio_loop
-        fut = run_coroutine_threadsafe(_do(), get_asyncio_loop())
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
+        fut = _asyncio.run_coroutine_threadsafe(_do(), get_asyncio_loop())
         try:
             self._last_buy = fut.result(timeout=200)
             self.buyResult.emit()
