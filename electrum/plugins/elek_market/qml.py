@@ -10,7 +10,7 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot, pyqtProperty
 
 from electrum.i18n import _
 from electrum.plugin import hook
-from electrum.gui.qml.qEObject import PluginQObject  # noqa: F401 (import guard)
+from electrum.gui.common_qt.plugins import PluginQObject
 
 from . import Plugin as ElekMarketBase
 from .market_api import MarketApi, MarketApiError
@@ -54,11 +54,9 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot()
     def refresh_rates(self):
-        import asyncio
+        from electrum.util import run_coroutine_threadsafe, get_asyncio_loop
         api = self.plugin().get_api()
-        loop = asyncio.get_event_loop()
-        from electrum.util import run_coroutine_threadsafe
-        fut = run_coroutine_threadsafe(api.get_rates_raw(), loop)
+        fut = run_coroutine_threadsafe(api.get_rates_raw(), get_asyncio_loop())
         try:
             self._rates = fut.result(timeout=30)
             self.ratesReady.emit()
@@ -71,11 +69,9 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot(str, str)
     def refresh_orderbook(self, base: str, rel: str):
-        import asyncio
+        from electrum.util import run_coroutine_threadsafe, get_asyncio_loop
         api = self.plugin().get_api()
-        from electrum.util import run_coroutine_threadsafe
-        loop = asyncio.get_event_loop()
-        fut = run_coroutine_threadsafe(api.get_orderbook(base, rel), loop)
+        fut = run_coroutine_threadsafe(api.get_orderbook(base, rel), get_asyncio_loop())
         try:
             ob = fut.result(timeout=30)
             self._book = api.parse_orderbook(ob)
@@ -89,12 +85,26 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot(str, str, str, str)
     def buy(self, base: str, rel: str, volume: str, price: str):
-        import asyncio, json as _json
+        """Taker-buy. Primary path: POST to the user's own client-kdf
+        (config: plugins.elek_market.swap_endpoint / swap_userpass) — the
+        market itself stays 0-balance (M2 no-custody). Fallback: legacy
+        market /rpc proxy."""
+        import json as _json
         import aiohttp
-        api = self.plugin().get_api()
-        payload = {"method": "buy", "base": base, "rel": rel,
-                   "price": price, "volume": volume}
-        url = self.plugin().endpoint.rstrip("/") + "/rpc"
+
+        cfg = self.plugin().config
+        swap_endpoint = cfg.get('plugins.elek_market.swap_endpoint')
+        swap_userpass = cfg.get('plugins.elek_market.swap_userpass')
+
+        if swap_endpoint:
+            payload = {"userpass": swap_userpass or "",
+                       "method": "buy", "base": base, "rel": rel,
+                       "price": price, "volume": volume}
+            url = swap_endpoint.rstrip("/")
+        else:
+            payload = {"method": "buy", "base": base, "rel": rel,
+                       "price": price, "volume": volume}
+            url = self.plugin().endpoint.rstrip("/") + "/rpc"
         timeout = aiohttp.ClientTimeout(total=180)
 
         async def _do():
@@ -105,8 +115,8 @@ class QMarketSignalObject(PluginQObject):
                         raise MarketApiError(reply.status, body)
                     return _json.loads(body)
 
-        from electrum.util import run_coroutine_threadsafe
-        fut = run_coroutine_threadsafe(_do(), asyncio.get_event_loop())
+        from electrum.util import run_coroutine_threadsafe, get_asyncio_loop
+        fut = run_coroutine_threadsafe(_do(), get_asyncio_loop())
         try:
             self._last_buy = fut.result(timeout=200)
             self.buyResult.emit()
