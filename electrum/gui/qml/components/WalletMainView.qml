@@ -314,6 +314,17 @@ Item {
             FlatButton {
                 Layout.fillWidth: true
                 Layout.preferredWidth: 1
+                icon.source: '../../icons/lightning.png'
+                text: qsTr('Tausch')
+                enabled: true
+                onClicked: {
+                    var dialog = marketPageDialog.createObject(mainView)
+                    dialog.open()
+                }
+            }
+            FlatButton {
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 icon.source: '../../icons/tab_send.png'
                 text: qsTr('Send')
                 enabled: !invoiceParser.busy && !piResolver.busy && !requestDetails.busy
@@ -329,11 +340,17 @@ Item {
     }
     property color navigationBarBackgroundColor: constants.highlightBackground
 
+    Component {
+        id: marketPageDialog
+        MarketPage {}
+    }
+
     PIResolver {
         id: piResolver
         wallet: Daemon.currentWallet
 
         onResolveError: (code, message) => {
+
             var dialog = app.messageDialog.createObject(app, {
                 title: qsTr('Error'),
                 iconSource: Qt.resolvedUrl('../../icons/warning.png'),
