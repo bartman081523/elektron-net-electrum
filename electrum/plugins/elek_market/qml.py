@@ -15,6 +15,40 @@ from electrum.gui.common_qt.plugins import PluginQObject
 from . import Plugin as ElekMarketBase
 from .market_api import MarketApi, MarketApiError, KdfClient
 
+
+def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
+    """True when the order book (market_api.parse_orderbook shape, VIEW
+    frame) holds a quote that crosses the resting taker order's own terms.
+
+    #89 semantics: kdf matches a taker request only in the instant of its
+    arrival (maker nodes call process_taker_request; a later-arriving
+    MAKER order is merely inserted into the local book); an unmatched GTC
+    taker order is auto-converted to a maker order after 30 s and from
+    then on fills only against NEW taker arrivals — two maker orders never
+    meet. So if the user's resting order now coexists with a crossing
+    maker quote, filling requires cancel + re-issue (a fresh request).
+    kind='ask': the order fills an ASK (buys `base` paying `rel`, cap
+    `price`) → crossed by any ask ≤ price. kind='bid': fills a BID (sells
+    `base` for `rel`, floor `price`) → crossed by any bid ≥ price."""
+    if not isinstance(book, dict):
+        return False
+    try:
+        side = "asks" if kind == "ask" else "bids"
+        return any(
+            0.0 < float(q["price"]) <= price + 1e-12
+            if kind == "ask" else
+            float(q["price"]) >= price - 1e-12 > 0.0
+            for q in (book.get(side) or [])
+        )
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+TAKER_RETRY_MAX = 3
+# kdf auto-converts an unmatched GTC taker order to a maker order after
+# 30 s; a natural match settles within a few seconds of placement.
+TAKER_RETRY_SETTLE_SECS = 45.0
+
 if TYPE_CHECKING:
     from electrum.gui.qml import ElectrumGui, ElectrumQmlApplication
 
@@ -58,6 +92,10 @@ class QMarketSignalObject(PluginQObject):
         self._swap_status = None
         self._my_orders = {}
         self._last_maker = None
+        # #89 taker-retry state: the placed order's view terms + retry bookkeeping
+        self._taker = None
+        self._taker_since = 0.0
+        self._retry_count = 0
 
     @pyqtProperty(str)
     def endpoint(self):
@@ -165,6 +203,66 @@ class QMarketSignalObject(PluginQObject):
             return
         self.buyResult.emit()
 
+    def _begin_taker(self, kind: str, base: str, rel: str,
+                     volume: str, price: str):
+        """#89 Taker-Retry bookkeeping: remember the placed order's view
+        terms so check_status can cancel + re-issue it against a maker
+        quote that crosses later (see retry_crossing)."""
+        import time as _time
+        self._taker = {"kind": kind, "args": (base, rel, volume, price)}
+        self._taker_since = _time.time()
+        self._retry_count = 0
+
+    def _place_view_taker(self, kind: str, base: str, rel: str,
+                          volume: str, price: str):
+        """Placement shared by the QML slots (validated inputs) and the
+        #89 retry path — applies the view→kdf-native mapping for 'bid'
+        orders but touches NO retry bookkeeping (the retry path must not
+        reset its counter)."""
+        if kind == 'ask':
+            res = self._post_buy_legacy(base, rel, volume, price)
+        else:  # 'bid': kdf-native buy(rel, base), reciprocal mapping
+            p, v = float(price), float(volume)
+            res = self._post_buy_legacy(rel, base, str(v * p), str(1.0 / p))
+        self._finish_buy(res)
+
+    def _maybe_retry(self):
+        """#89: the resting taker order coexists with a maker quote that
+        crosses its terms only AFTER its arrival instant — kdf never
+        matches two maker orders. Cancel + re-issue (fresh taker request,
+        bounded by TAKER_RETRY_MAX) so the counterparty matches on
+        arrival. Settle window: the kdf conversion itself happens at 30 s
+        and a natural match can take a few seconds to propagate."""
+        import asyncio as _asyncio
+        import time as _time
+        from electrum.util import get_asyncio_loop
+
+        taker = self._taker
+        if taker is None or self._retry_count >= TAKER_RETRY_MAX:
+            return
+        if _time.time() - self._taker_since < TAKER_RETRY_SETTLE_SECS:
+            return
+        api = self.plugin.get_api()
+        base, rel, volume, price = taker["args"]
+        fut = _asyncio.run_coroutine_threadsafe(
+            api.get_orderbook(base, rel), get_asyncio_loop())
+        try:
+            book = api.parse_orderbook(fut.result(timeout=30))
+            if not retry_crossing(book, taker["kind"], float(price)):
+                return
+        except Exception:
+            return  # book unreadable — retry again on the next poll
+        try:
+            kdf = self._get_kdf_cfg()
+            _asyncio.run_coroutine_threadsafe(
+                kdf.cancel_order(self._swap_uuid), get_asyncio_loop()
+            ).result(timeout=30)
+        except Exception:
+            return  # cannot cancel (e.g. being matched) — keep the order
+        self._retry_count += 1
+        self._taker_since = _time.time()
+        self._place_view_taker(taker["kind"], *taker["args"])
+
     @pyqtSlot(str, str, str, str)
     def buy(self, base: str, rel: str, volume: str, price: str):
         """Taker that FILLS A BID of the view pair (instantly SELL `base`
@@ -181,9 +279,8 @@ class QMarketSignalObject(PluginQObject):
         except ValueError as e:
             self.error.emit(str(e))
             return
-        base, rel = rel, base
-        self._finish_buy(self._post_buy_legacy(
-            base, rel, str(v * p), str(1.0 / p)))
+        self._begin_taker('bid', base, rel, volume, price)
+        self._place_view_taker('bid', base, rel, volume, price)
 
     @pyqtSlot(str, str, str, str)
     def buy_taker(self, base: str, rel: str, volume: str, price: str):
@@ -196,7 +293,8 @@ class QMarketSignalObject(PluginQObject):
         except ValueError as e:
             self.error.emit(str(e))
             return
-        self._finish_buy(self._post_buy_legacy(base, rel, volume, price))
+        self._begin_taker('ask', base, rel, volume, price)
+        self._place_view_taker('ask', base, rel, volume, price)
 
     @pyqtSlot(str, str, str, str, str)
     def make_order(self, base: str, rel: str, side: str,
@@ -320,8 +418,10 @@ class QMarketSignalObject(PluginQObject):
         except MarketApiError as e:
             if 'NoSwapWithUuid' in str(getattr(e, "body", "")):
                 self._swap_status = {"uuid": self._swap_uuid, "types": [],
-                                     "state": "OrderWaitingForMatch"}
+                                     "state": "OrderWaitingForMatch",
+                                     "retries": self._retry_count}
                 self.swapStatusReady.emit()
+                self._maybe_retry()
                 return
             self.error.emit(str(e))
             return

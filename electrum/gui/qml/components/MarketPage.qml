@@ -95,7 +95,9 @@ ElDialog {
             if (s !== null && s !== undefined) {
                 var u = s.uuid ? String(s.uuid).substring(0, 8) : '-'
                 if (s.state === 'OrderWaitingForMatch')
-                    swapLabel.text = qsTr('Order %1 im Buch — wartet auf Match').arg(u)
+                    swapLabel.text = (s.retries > 0)
+                        ? qsTr('Order %1 im Buch — gegen Kreuzquote erneuert (%2×)').arg(u).arg(s.retries)
+                        : qsTr('Order %1 im Buch — wartet auf Match').arg(u)
                 else
                     swapLabel.text = qsTr('Swap %1 — %2').arg(u).arg(s.state)
                 swapEventsLabel.text = (s.types || []).join(' → ')
