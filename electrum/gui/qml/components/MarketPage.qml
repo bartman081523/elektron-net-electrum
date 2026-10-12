@@ -94,7 +94,10 @@ ElDialog {
             var s = MarketPlugin.swapStatus
             if (s !== null && s !== undefined) {
                 var u = s.uuid ? String(s.uuid).substring(0, 8) : '-'
-                swapLabel.text = qsTr('Swap %1 — %2').arg(u).arg(s.state)
+                if (s.state === 'OrderWaitingForMatch')
+                    swapLabel.text = qsTr('Order %1 im Buch — wartet auf Match').arg(u)
+                else
+                    swapLabel.text = qsTr('Swap %1 — %2').arg(u).arg(s.state)
                 swapEventsLabel.text = (s.types || []).join(' → ')
                 root.swapRunning = !(s.state === 'Finished' || s.state === 'Failed'
                                   || s.state === 'Refunded' || s.state === 'Successful'
@@ -262,18 +265,35 @@ ElDialog {
                 text: qsTr('Kaufen (Ask)')
                 onClicked: {
                     if (MarketPlugin == null || MarketPlugin == undefined) { statusLabel.text = qsTr('plugin missing'); return }
-                    MarketPlugin.buy_taker(root.pairBase, root.pairRel,
-                                           tkVolume.text !== '' ? tkVolume.text : '1',
-                                           tkPrice.text !== '' ? tkPrice.text : (root.bestAsk || '1'))
+                    // #72 lesson: no silent defaults — an empty volume used to
+                    // publish a resting taker order ('1' @ best cap) that
+                    // stays in the book and answers NoSwapWithUuid.
+                    if (tkVolume.text === '') {
+                        statusLabel.text = qsTr('Menge angeben (z.B. 0.1)')
+                        return
+                    }
+                    if (tkPrice.text === '' && root.bestAsk === '') {
+                        statusLabel.text = qsTr('Keine Asks im Buch — Preis angeben')
+                        return
+                    }
+                    MarketPlugin.buy_taker(root.pairBase, root.pairRel, tkVolume.text,
+                                           tkPrice.text !== '' ? tkPrice.text : root.bestAsk)
                 }
             }
             FlatButton {
                 text: qsTr('Verkaufen (Bid)')
                 onClicked: {
                     if (MarketPlugin == null || MarketPlugin == undefined) { statusLabel.text = qsTr('plugin missing'); return }
-                    MarketPlugin.buy(root.pairBase, root.pairRel,
-                                     tkVolume.text !== '' ? tkVolume.text : '1',
-                                     tkPrice.text !== '' ? tkPrice.text : (root.bestBid || '1'))
+                    if (tkVolume.text === '') {
+                        statusLabel.text = qsTr('Menge angeben (z.B. 0.1)')
+                        return
+                    }
+                    if (tkPrice.text === '' && root.bestBid === '') {
+                        statusLabel.text = qsTr('Keine Bids im Buch — Preis angeben')
+                        return
+                    }
+                    MarketPlugin.buy(root.pairBase, root.pairRel, tkVolume.text,
+                                     tkPrice.text !== '' ? tkPrice.text : root.bestBid)
                 }
             }
         }

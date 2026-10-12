@@ -296,7 +296,14 @@ class QMarketSignalObject(PluginQObject):
     @pyqtSlot()
     def check_status(self):
         """Poll my_swap_status for the captured swap uuid and expose the
-        parsed event list + state via swapStatus/swapStatusReady (B3 #5)."""
+        parsed event list + state via swapStatus/swapStatusReady (B3 #5).
+
+        #72 finding: a taker `buy` whose price cap finds no maker match is
+        published as a RESTING ORDER — my_swap_status for its uuid answers
+        mmrpc 2.0 error_type NoSwapWithUuid until a maker matches it (the
+        order uuid only becomes a swap uuid at match). Classify that as
+        "OrderWaitingForMatch" so the QML poll timer keeps running instead
+        of surfacing an error."""
         if not self._swap_uuid:
             self.error.emit('no swap to check yet')
             return
@@ -309,7 +316,17 @@ class QMarketSignalObject(PluginQObject):
         fut = _asyncio.run_coroutine_threadsafe(
             kdf.my_swap_status(self._swap_uuid), get_asyncio_loop())
         try:
-            status = KdfClient.parse_swap_status(fut.result(timeout=60))
+            raw = fut.result(timeout=60)
+        except MarketApiError as e:
+            if 'NoSwapWithUuid' in str(getattr(e, "body", "")):
+                self._swap_status = {"uuid": self._swap_uuid, "types": [],
+                                     "state": "OrderWaitingForMatch"}
+                self.swapStatusReady.emit()
+                return
+            self.error.emit(str(e))
+            return
+        try:
+            status = KdfClient.parse_swap_status(raw)
             status["uuid"] = self._swap_uuid
             self._swap_status = status
             self.swapStatusReady.emit()
