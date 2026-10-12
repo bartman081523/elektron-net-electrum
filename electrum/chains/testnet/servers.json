@@ -1,9 +1,4 @@
 {
-  "192.168.178.21": {
-    "pruning": "-",
-    "t": "50005",
-    "version": "1.4"
-  },
   "electrs.elektron-net.org": {
     "pruning": "-",
     "t": "50002",
