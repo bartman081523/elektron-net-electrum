@@ -39,7 +39,9 @@ contrib/build-linux/appimage/build/
 contrib/build-linux/appimage/.cache/
 contrib/osx/.cache/
 contrib/osx/build-venv/
-contrib/android/android_debug.keystore
+# elektron fork: the debug keystore IS committed deliberately (make_apk.sh
+# reuses it when present) so CI builds keep one stable signature and APK
+# updates stay install-compatible on phones (no per-runner key rotation).
 contrib/android/.cache/
 contrib/secp256k1/
 contrib/zbar/
