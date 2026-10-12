@@ -191,6 +191,63 @@ class KdfClient:
                                  "base": base, "rel": rel,
                                  "price": price, "volume": volume})
 
+    async def setprice(self, base: str, rel: str, price: str, volume: str,
+                       min_volume: str | None = None,
+                       cancel_previous: bool = False) -> dict:
+        """Legacy `setprice` (top-level fields, lp_ordermatch.rs SetPriceReq):
+        place a maker order selling `base` for `rel` (price = rel per base).
+        The daemon default for cancel_previous is True (it replaces every
+        other own order of the same pair); we send False so the app can keep
+        several orders and cancel them individually by uuid."""
+        body = {"userpass": self.userpass, "method": "setprice",
+                "base": base, "rel": rel, "price": price, "volume": volume,
+                "cancel_previous": cancel_previous}
+        if min_volume:
+            body["min_volume"] = min_volume
+        return await self._post(body)
+
+    async def my_orders_legacy(self) -> dict:
+        """Legacy `my_orders` — NOT mmrpc 2.0 (the v2 wrapper answers
+        NoSuchMethod; routed only in dispatcher_legacy.rs). Response:
+        {result: {maker_orders: {uuid: {...}}, taker_orders: {..}}}."""
+        return await self._post({"userpass": self.userpass,
+                                 "method": "my_orders"})
+
+    async def cancel_order(self, uuid: str) -> dict:
+        """Legacy `cancel_order` — uuid at top level (CancelOrderReq is
+        deserialized from the request root)."""
+        return await self._post({"userpass": self.userpass,
+                                 "method": "cancel_order", "uuid": uuid})
+
+    @staticmethod
+    def parse_my_orders(raw: dict) -> dict:
+        result = raw.get("result") if isinstance(raw, dict) else None
+        if result is None and isinstance(raw, dict):
+            # legacy wrappers surface failures as {"error": "..."}
+            raise MarketApiError(-5, f"my_orders: {str(raw)[:200]}")
+        if not isinstance(result, dict):
+            raise MarketApiError(-5, f"my_orders: unexpected body {json.dumps(raw)[:200]}")
+        makers = []
+        for uuid, o in (result.get("maker_orders") or {}).items():
+            if not (isinstance(o, dict) and o.get("uuid", uuid)):
+                continue
+            makers.append({
+                "uuid": str(o.get("uuid", uuid)),
+                "base": str(o.get("base", "")),
+                "rel": str(o.get("rel", "")),
+                "price": str(o.get("price", "")),
+                "volume": str(o.get("max_base_vol", "")),
+                "available": str(o.get("available_amount", "")),
+                "cancellable": bool(o.get("cancellable", False)),
+                "created_at": int(o.get("created_at", 0) or 0),
+            })
+        # newest first — the app shows fresh orders on top
+        makers.sort(key=lambda m: m["created_at"], reverse=True)
+        takers = []
+        for uuid in (result.get("taker_orders") or {}):
+            takers.append({"uuid": str(uuid)})
+        return {"maker_orders": makers, "taker_orders": takers}
+
     async def my_swap_status(self, uuid: str) -> dict:
         return await self._post({
             "userpass": self.userpass, "method": "my_swap_status",
