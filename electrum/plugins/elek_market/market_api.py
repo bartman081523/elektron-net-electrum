@@ -126,3 +126,104 @@ class MarketApi:
             "total_asks_base_vol": str(ob.get("total_asks_base_vol", "")),
             "total_bids_rel_vol": str(ob.get("total_bids_rel_vol", "")),
         }
+
+
+class KdfClient:
+    """Client for the user's OWN client-kdf instance (M2 no-custody: the
+    wallet process that holds the user's coins and runs the swaps).
+
+    This never targets the market daemons. Legacy buy uses top-level
+    fields (v1-style); status polling uses the mmrpc 2.0 wrapper.
+    """
+
+    FINAL_EVENTS = ("Finished", "Failed", "Refunded", "Successful", "Error")
+
+    def __init__(self, url: str, userpass: str, timeout: float = 190.0):
+        self.url = (url or "").rstrip("/")
+        self.userpass = userpass or ""
+        self._timeout = aiohttp.ClientTimeout(total=timeout, connect=5.0)
+        self._session: aiohttp.ClientSession | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=self._timeout,
+                headers={"Accept": "application/json"})
+        return self._session
+
+    async def close(self):
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+
+    async def _post(self, body: dict) -> dict:
+        session = await self._get_session()
+        try:
+            async with session.post(self.url, json=body) as reply:
+                text = await reply.text()
+                if reply.status != 200:
+                    raise MarketApiError(reply.status, text)
+                return json.loads(text)
+        except MarketApiError:
+            raise
+        except Exception as e:
+            raise MarketApiError("net", f"{type(e).__name__}: {e}") from e
+
+    async def buy_legacy(self, base: str, rel: str, price: str, volume: str) -> dict:
+        return await self._post({"userpass": self.userpass, "method": "buy",
+                                 "base": base, "rel": rel,
+                                 "price": price, "volume": volume})
+
+    async def my_swap_status(self, uuid: str) -> dict:
+        return await self._post({
+            "userpass": self.userpass, "method": "my_swap_status",
+            "params": {"uuid": uuid}, "mmrpc": "2.0"})
+
+    async def my_recent_swaps(self, limit: int = 1) -> dict:
+        return await self._post({
+            "userpass": self.userpass, "method": "my_recent_swaps",
+            "params": {"limit": limit}, "mmrpc": "2.0"})
+
+    @staticmethod
+    def find_uuid(obj) -> "str | None":
+        """Search a legacy buy response for a swap uuid (depth-first). The
+        buy response carries the uuid somewhere below `result` without a
+        guaranteed top-level `uuid` key, so scan defensively."""
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if (k == "uuid" and isinstance(v, str)
+                        and len(v) == 36 and v.count("-") == 4):
+                    return v
+            for v in obj.values():
+                found = KdfClient.find_uuid(v)
+                if found:
+                    return found
+        elif isinstance(obj, list):
+            for v in obj:
+                found = KdfClient.find_uuid(v)
+                if found:
+                    return found
+        return None
+
+    @staticmethod
+    def parse_swap_status(raw: dict) -> dict:
+        """Shape (evidence, A4/`#61` e2e): result.swap_data.events[*].event.type.
+        Falls back to result.events for older layouts."""
+        result = raw.get("result") if isinstance(raw, dict) else None
+        if not isinstance(result, dict):
+            raise MarketApiError(-4, f"my_swap_status: unexpected body {json.dumps(raw)[:200]}")
+        swap_data = result.get("swap_data") if isinstance(result.get("swap_data"), dict) else {}
+        events_raw = swap_data.get("events") or result.get("events") or []
+        types = []
+        for e in events_raw:
+            ev = e.get("event") if isinstance(e, dict) else None
+            if isinstance(ev, dict):
+                types.append(str(ev.get("type") or "-"))
+        state = "Running"
+        for t in types:
+            if t == "Finished":
+                state = "Finished"
+                break
+            if t in KdfClient.FINAL_EVENTS:
+                state = t
+        return {"types": types, "state": state}

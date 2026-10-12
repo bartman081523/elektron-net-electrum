@@ -49,12 +49,39 @@ ElDialog {
             }
         }
         function onBuyResult() {
-            var b = MarketPlugin.lastBuy
-            swapLabel.text = qsTr('Swap request accepted: %1').arg(b && b.uuid ? b.uuid : '-')
+            var u = MarketPlugin.swapUuid
+            swapLabel.text = qsTr('Swap started: %1').arg(u ? u.substring(0, 8) : '-')
+            root.swapRunning = !!u
+            if (u)
+                MarketPlugin.check_status()
+        }
+        function onSwapStatusReady() {
+            var s = MarketPlugin.swapStatus
+            if (s !== null && s !== undefined) {
+                var u = s.uuid ? String(s.uuid).substring(0, 8) : '-'
+                swapLabel.text = qsTr('Swap %1 — %2').arg(u).arg(s.state)
+                swapEventsLabel.text = (s.types || []).join(' → ')
+                root.swapRunning = !(s.state === 'Finished' || s.state === 'Failed'
+                                  || s.state === 'Refunded' || s.state === 'Successful'
+                                  || s.state === 'Error')
+            }
         }
         function onError(msg) {
             statusLabel.text = msg
+            if (String(msg).indexOf('no swap to check') < 0)
+                root.swapRunning = false
         }
+    }
+
+    // Bounded status poll while the dialog is open: starts with a buy, stops
+    // once my_swap_status reports a final state (or an error occurs).
+    property bool swapRunning: false
+    Timer {
+        id: swapTimer
+        interval: 5000
+        repeat: true
+        running: root.swapRunning
+        onTriggered: MarketPlugin && MarketPlugin.check_status()
     }
 
     ColumnLayout {
@@ -102,6 +129,13 @@ ElDialog {
             Layout.fillWidth: true
             text: ''
         }
+        Label {
+            id: swapEventsLabel
+            Layout.fillWidth: true
+            font.pixelSize: 11
+            wrapMode: Text.WrapAnywhere
+            text: ''
+        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -116,6 +150,14 @@ ElDialog {
                 onClicked: {
                     if (MarketPlugin == null) { statusLabel.text = qsTr('plugin missing'); return }
                     MarketPlugin.buy(root.pairBase, root.pairRel, '1', '1')
+                }
+            }
+            FlatButton {
+                Layout.fillWidth: true
+                text: qsTr('Status')
+                onClicked: {
+                    if (MarketPlugin == null || MarketPlugin == undefined) { statusLabel.text = qsTr('plugin missing'); return }
+                    MarketPlugin.check_status()
                 }
             }
         }

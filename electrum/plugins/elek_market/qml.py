@@ -13,7 +13,7 @@ from electrum.plugin import hook
 from electrum.gui.common_qt.plugins import PluginQObject
 
 from . import Plugin as ElekMarketBase
-from .market_api import MarketApi, MarketApiError
+from .market_api import MarketApi, MarketApiError, KdfClient
 
 if TYPE_CHECKING:
     from electrum.gui.qml import ElectrumGui, ElectrumQmlApplication
@@ -28,11 +28,14 @@ class QMarketSignalObject(PluginQObject):
         MarketPlugin.refresh_rates()
         MarketPlugin.refresh_orderbook(base, rel)
         MarketPlugin.buy(base, rel, volume, price)
+        MarketPlugin.check_status()
+        MarketPlugin.swapUuid / MarketPlugin.swapStatus
     """
 
     ratesReady = pyqtSignal()
     orderbookReady = pyqtSignal()
     buyResult = pyqtSignal()
+    swapStatusReady = pyqtSignal()
     error = pyqtSignal(str)
 
     _name = _('Elektron Market')
@@ -43,6 +46,9 @@ class QMarketSignalObject(PluginQObject):
         self._book = None
         self._last_buy = None
         self._last_error = None
+        self._kdf: KdfClient | None = None
+        self._swap_uuid = None
+        self._swap_status = None
 
     @pyqtProperty(str)
     def endpoint(self):
@@ -85,14 +91,26 @@ class QMarketSignalObject(PluginQObject):
     def orderbook(self):
         return self._book
 
+    def _get_kdf(self, swap_endpoint, swap_userpass) -> KdfClient:
+        """Shared client for buy + status polling (kept open across calls)."""
+        k = self._kdf
+        if k is None or k.url != (swap_endpoint or "").rstrip("/"):
+            k = KdfClient(swap_endpoint or "", swap_userpass or "")
+            self._kdf = k
+        else:
+            k.userpass = swap_userpass or ""
+        return k
+
     @pyqtSlot(str, str, str, str)
     def buy(self, base: str, rel: str, volume: str, price: str):
-        """Taker-buy. Primary path: POST to the user's own client-kdf
+        """Taker-buy. Primary path: legacy `buy` on the user's own client-kdf
         (config: plugins.elek_market.swap_endpoint / swap_userpass) — the
         market itself stays 0-balance (M2 no-custody). Fallback: legacy
         market /rpc proxy."""
         import json as _json
         import aiohttp
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
 
         cfg = self.plugin.config
         swap_endpoint = cfg.get('plugins.elek_market.swap_endpoint')
@@ -104,30 +122,35 @@ class QMarketSignalObject(PluginQObject):
         if base == 'tELEK' and rel == 'tBTC':
             base, rel = rel, base
 
+        loop = get_asyncio_loop()
         if swap_endpoint:
-            payload = {"userpass": swap_userpass or "",
-                       "method": "buy", "base": base, "rel": rel,
-                       "price": price, "volume": volume}
-            url = swap_endpoint.rstrip("/")
+            kdf = self._get_kdf(swap_endpoint, swap_userpass)
+            fut = _asyncio.run_coroutine_threadsafe(
+                kdf.buy_legacy(base, rel, price, volume), loop)
         else:
             payload = {"method": "buy", "base": base, "rel": rel,
                        "price": price, "volume": volume}
             url = self.plugin.endpoint.rstrip("/") + "/rpc"
-        timeout = aiohttp.ClientTimeout(total=180)
+            timeout = aiohttp.ClientTimeout(total=180)
 
-        async def _do():
-            async with aiohttp.ClientSession(timeout=timeout) as s:
-                async with s.post(url, json=payload) as reply:
-                    body = await reply.text()
-                    if reply.status != 200:
-                        raise MarketApiError(reply.status, body)
-                    return _json.loads(body)
+            async def _do():
+                async with aiohttp.ClientSession(timeout=timeout) as s:
+                    async with s.post(url, json=payload) as reply:
+                        body = await reply.text()
+                        if reply.status != 200:
+                            raise MarketApiError(reply.status, body)
+                        return _json.loads(body)
 
-        import asyncio as _asyncio
-        from electrum.util import get_asyncio_loop
-        fut = _asyncio.run_coroutine_threadsafe(_do(), get_asyncio_loop())
+            fut = _asyncio.run_coroutine_threadsafe(_do(), loop)
         try:
             self._last_buy = fut.result(timeout=200)
+            # Legacy buy carries the swap uuid somewhere below `result`
+            # without a guaranteed top-level key; capture it for status polling.
+            self._swap_uuid = KdfClient.find_uuid(self._last_buy)
+            if self._swap_uuid is None and isinstance(self._last_buy, dict) \
+                    and self._last_buy.get("error") is not None:
+                self.error.emit(str(self._last_buy["error"])[:200])
+                return
             self.buyResult.emit()
         except Exception as e:
             self.error.emit(str(e))
@@ -135,6 +158,37 @@ class QMarketSignalObject(PluginQObject):
     @pyqtProperty('QVariant')
     def lastBuy(self):
         return self._last_buy
+
+    @pyqtProperty(str)
+    def swapUuid(self):
+        return self._swap_uuid or ""
+
+    @pyqtSlot()
+    def check_status(self):
+        """Poll my_swap_status for the captured swap uuid and expose the
+        parsed event list + state via swapStatus/swapStatusReady (B3 #5)."""
+        if not self._swap_uuid:
+            self.error.emit('no swap to check yet')
+            return
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
+
+        cfg = self.plugin.config
+        kdf = self._get_kdf(cfg.get('plugins.elek_market.swap_endpoint'),
+                            cfg.get('plugins.elek_market.swap_userpass'))
+        fut = _asyncio.run_coroutine_threadsafe(
+            kdf.my_swap_status(self._swap_uuid), get_asyncio_loop())
+        try:
+            status = KdfClient.parse_swap_status(fut.result(timeout=60))
+            status["uuid"] = self._swap_uuid
+            self._swap_status = status
+            self.swapStatusReady.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
+    @pyqtProperty('QVariant')
+    def swapStatus(self):
+        return self._swap_status
 
 
 class Plugin(ElekMarketBase):
@@ -152,5 +206,4 @@ class Plugin(ElekMarketBase):
         self._so.setParent(app)
         self.so = self._so  # QEAppController.plugin() expects has-property 'so'
         app.engine.rootContext().setContextProperty('MarketPlugin', self._so)
-        self.logger.info('MarketPlugin context property registered')
         self.logger.info('MarketPlugin context property registered')
