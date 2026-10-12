@@ -13,6 +13,21 @@ import json
 import aiohttp
 
 
+def _verified_ssl():
+    """TLS config for HTTPS endpoints (e.g. https://elektron-market.onrender.com).
+
+    On Android the bundled OpenSSL has no usable default CA directory, so
+    aiohttp's plain `ssl=True` fails with ClientConnectorCertificateError.
+    Verify against certifi's bundle instead (electrum core ships it —
+    electrum/interface.py:74 does the same for its own sockets)."""
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return True
+
+
 class MarketApiError(Exception):
     ROOT = "market-api"
 
@@ -45,6 +60,7 @@ class MarketApi:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 timeout=self._timeout,
+                connector=aiohttp.TCPConnector(ssl=_verified_ssl()),
                 headers={"Accept": "application/json"})
         return self._session
 
@@ -148,6 +164,7 @@ class KdfClient:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 timeout=self._timeout,
+                connector=aiohttp.TCPConnector(ssl=_verified_ssl()),
                 headers={"Accept": "application/json"})
         return self._session
 

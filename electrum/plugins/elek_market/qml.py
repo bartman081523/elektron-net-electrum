@@ -133,8 +133,12 @@ class QMarketSignalObject(PluginQObject):
             url = self.plugin.endpoint.rstrip("/") + "/rpc"
             timeout = aiohttp.ClientTimeout(total=180)
 
+            from electrum.plugins.elek_market.market_api import _verified_ssl
+
             async def _do():
-                async with aiohttp.ClientSession(timeout=timeout) as s:
+                async with aiohttp.ClientSession(
+                        timeout=timeout,
+                        connector=aiohttp.TCPConnector(ssl=_verified_ssl())) as s:
                     async with s.post(url, json=payload) as reply:
                         body = await reply.text()
                         if reply.status != 200:
