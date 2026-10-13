@@ -126,7 +126,21 @@ ElDialog {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 6
+        spacing: 0
+
+        // whole content scrolls — the page outgrew the dialog on small screens
+        Flickable {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            contentHeight: pageColumn.height
+            clip: true
+            interactive: height < contentHeight
+
+            ColumnLayout {
+                id: pageColumn
+                width: parent.width
+                spacing: 6
 
         Label {
             Layout.fillWidth: true
@@ -149,8 +163,7 @@ ElDialog {
         ListView {
             id: bookList
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: 120
+            Layout.preferredHeight: 160
             model: ListModel { id: bookModel }
             delegate: ItemDelegate {
                 width: bookList.width
@@ -335,6 +348,9 @@ ElDialog {
             text: qsTr('Close')
             onClicked: root.close()
         }
+
+            } // pageColumn
+        } // Flickable
     }
 
     Component.onCompleted: refreshAll()
