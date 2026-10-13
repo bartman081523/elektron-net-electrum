@@ -8,7 +8,7 @@ import "controls"
 ElDialog {
     id: root
 
-    title: qsTr('Elektron Market — Tausch tELEK↔tBTC')
+    title: qsTr('Elektron Market - Tausch tELEK<->tBTC')
 
     property string pairBase: 'tELEK'
     property string pairRel: 'tBTC'
@@ -96,11 +96,11 @@ ElDialog {
                 var u = s.uuid ? String(s.uuid).substring(0, 8) : '-'
                 if (s.state === 'OrderWaitingForMatch')
                     swapLabel.text = (s.retries > 0)
-                        ? qsTr('Order %1 im Buch — gegen Kreuzquote erneuert (%2×)').arg(u).arg(s.retries)
-                        : qsTr('Order %1 im Buch — wartet auf Match').arg(u)
+                        ? qsTr('Order %1 im Buch - gegen Kreuzquote erneuert (%2x)').arg(u).arg(s.retries)
+                        : qsTr('Order %1 im Buch - wartet auf Match').arg(u)
                 else
-                    swapLabel.text = qsTr('Swap %1 — %2').arg(u).arg(s.state)
-                swapEventsLabel.text = (s.types || []).join(' → ')
+                    swapLabel.text = qsTr('Swap %1 - %2').arg(u).arg(s.state)
+                swapEventsLabel.text = (s.types || []).join(' -> ')
                 root.swapRunning = !(s.state === 'Finished' || s.state === 'Failed'
                                   || s.state === 'Refunded' || s.state === 'Successful'
                                   || s.state === 'Error')
@@ -128,7 +128,7 @@ ElDialog {
         anchors.fill: parent
         spacing: 0
 
-        // whole content scrolls — the page outgrew the dialog on small screens
+        // whole content scrolls - the page outgrew the dialog on small screens
         Flickable {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -179,7 +179,7 @@ ElDialog {
             }
         }
 
-        Label { text: qsTr('Maker — eigene Order (Kurs in %1 je %2):').arg(root.pairRel).arg(root.pairBase) }
+        Label { text: qsTr('Maker - eigene Order (Kurs in %1 je %2):').arg(root.pairRel).arg(root.pairBase) }
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
@@ -262,7 +262,7 @@ ElDialog {
             text: qsTr('Keine offenen Orders.')
         }
 
-        Label { text: qsTr('Taker — sofort (Menge in %1):').arg(root.pairBase) }
+        Label { text: qsTr('Taker - sofort (Menge in %1):').arg(root.pairBase) }
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
@@ -274,13 +274,13 @@ ElDialog {
             TextField {
                 id: tkPrice
                 Layout.fillWidth: true
-                placeholderText: qsTr('Preis — leer = bestes')
+                placeholderText: qsTr('Preis - leer = bestes')
             }
             FlatButton {
                 text: qsTr('Kaufen (Ask)')
                 onClicked: {
                     if (MarketPlugin == null || MarketPlugin == undefined) { statusLabel.text = qsTr('plugin missing'); return }
-                    // #72 lesson: no silent defaults — an empty volume used to
+                    // #72 lesson: no silent defaults - an empty volume used to
                     // publish a resting taker order ('1' @ best cap) that
                     // stays in the book and answers NoSwapWithUuid.
                     if (tkVolume.text === '') {
@@ -288,7 +288,7 @@ ElDialog {
                         return
                     }
                     if (tkPrice.text === '' && root.bestAsk === '') {
-                        statusLabel.text = qsTr('Keine Asks im Buch — Preis angeben')
+                        statusLabel.text = qsTr('Keine Asks im Buch - Preis angeben')
                         return
                     }
                     MarketPlugin.buy_taker(root.pairBase, root.pairRel, tkVolume.text,
@@ -304,7 +304,7 @@ ElDialog {
                         return
                     }
                     if (tkPrice.text === '' && root.bestBid === '') {
-                        statusLabel.text = qsTr('Keine Bids im Buch — Preis angeben')
+                        statusLabel.text = qsTr('Keine Bids im Buch - Preis angeben')
                         return
                     }
                     MarketPlugin.buy(root.pairBase, root.pairRel, tkVolume.text,

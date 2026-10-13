@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Elektron Electrum – Market-API plugin (QML part for Android).
+# Elektron Electrum - Market-API plugin (QML part for Android).
 # Registers a QSignalObject under "MarketPlugin" context property so the new
 # QML "Tausch" page can call market-API functions. Read-only orderbook/rates
 # plus a buyer path to a user-owned client-kdf (no market-side custody).
@@ -24,12 +24,12 @@ def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
     arrival (maker nodes call process_taker_request; a later-arriving
     MAKER order is merely inserted into the local book); an unmatched GTC
     taker order is auto-converted to a maker order after 30 s and from
-    then on fills only against NEW taker arrivals — two maker orders never
+    then on fills only against NEW taker arrivals - two maker orders never
     meet. So if the user's resting order now coexists with a crossing
     maker quote, filling requires cancel + re-issue (a fresh request).
     kind='ask': the order fills an ASK (buys `base` paying `rel`, cap
-    `price`) → crossed by any ask ≤ price. kind='bid': fills a BID (sells
-    `base` for `rel`, floor `price`) → crossed by any bid ≥ price."""
+    `price`) -> crossed by any ask <= price. kind='bid': fills a BID (sells
+    `base` for `rel`, floor `price`) -> crossed by any bid >= price."""
     if not isinstance(book, dict):
         return False
     try:
@@ -155,7 +155,7 @@ class QMarketSignalObject(PluginQObject):
 
     def _post_buy_legacy(self, base: str, rel: str, volume: str, price: str):
         """Dispatch a kdf-native legacy `buy` to the user's own client-kdf
-        (config: plugins.elek_market.swap_endpoint / swap_userpass) — the
+        (config: plugins.elek_market.swap_endpoint / swap_userpass) - the
         market itself stays 0-balance (M2 no-custody). Fallback: legacy
         market /rpc proxy. Returns the raw response dict."""
         import json as _json
@@ -216,7 +216,7 @@ class QMarketSignalObject(PluginQObject):
     def _place_view_taker(self, kind: str, base: str, rel: str,
                           volume: str, price: str):
         """Placement shared by the QML slots (validated inputs) and the
-        #89 retry path — applies the view→kdf-native mapping for 'bid'
+        #89 retry path - applies the view->kdf-native mapping for 'bid'
         orders but touches NO retry bookkeeping (the retry path must not
         reset its counter)."""
         if kind == 'ask':
@@ -228,7 +228,7 @@ class QMarketSignalObject(PluginQObject):
 
     def _maybe_retry(self):
         """#89: the resting taker order coexists with a maker quote that
-        crosses its terms only AFTER its arrival instant — kdf never
+        crosses its terms only AFTER its arrival instant - kdf never
         matches two maker orders. Cancel + re-issue (fresh taker request,
         bounded by TAKER_RETRY_MAX) so the counterparty matches on
         arrival. Settle window: the kdf conversion itself happens at 30 s
@@ -251,14 +251,14 @@ class QMarketSignalObject(PluginQObject):
             if not retry_crossing(book, taker["kind"], float(price)):
                 return
         except Exception:
-            return  # book unreadable — retry again on the next poll
+            return  # book unreadable - retry again on the next poll
         try:
             kdf = self._get_kdf_cfg()
             _asyncio.run_coroutine_threadsafe(
                 kdf.cancel_order(self._swap_uuid), get_asyncio_loop()
             ).result(timeout=30)
         except Exception:
-            return  # cannot cancel (e.g. being matched) — keep the order
+            return  # cannot cancel (e.g. being matched) - keep the order
         self._retry_count += 1
         self._taker_since = _time.time()
         self._place_view_taker(taker["kind"], *taker["args"])
@@ -269,7 +269,7 @@ class QMarketSignalObject(PluginQObject):
         for `rel`). View contract: volume in `base`, price in `rel` per
         `base` (the book's bid terms). kdf-native it is buy(rel, base):
         the volume converts to the rel-proceeds (volume * price) and the
-        kdf price to its reciprocal (base per rel). At 1:1 both are 1 —
+        kdf price to its reciprocal (base per rel). At 1:1 both are 1 -
         the historic e2e form ('1', '1') stays equivalent."""
         try:
             p = float(price)
@@ -301,7 +301,7 @@ class QMarketSignalObject(PluginQObject):
                    price: str, volume: str):
         """MAKER order in the view pair. side='ask': offer `base` for
         `rel` (a plain setprice(base, rel)). side='bid': bid for `base`
-        paying `rel` — kdf-natively setprice(rel, base) with reciprocal
+        paying `rel` - kdf-natively setprice(rel, base) with reciprocal
         price and the rel-proceeds as volume. cancel_previous=False so
         several orders per pair can coexist, each cancellable by uuid."""
         import asyncio as _asyncio
@@ -397,7 +397,7 @@ class QMarketSignalObject(PluginQObject):
         parsed event list + state via swapStatus/swapStatusReady (B3 #5).
 
         #72 finding: a taker `buy` whose price cap finds no maker match is
-        published as a RESTING ORDER — my_swap_status for its uuid answers
+        published as a RESTING ORDER - my_swap_status for its uuid answers
         mmrpc 2.0 error_type NoSwapWithUuid until a maker matches it (the
         order uuid only becomes a swap uuid at match). Classify that as
         "OrderWaitingForMatch" so the QML poll timer keeps running instead

@@ -104,7 +104,7 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: packages
-          # elektron fork: key must NOT include contrib/android/** — the
+          # elektron fork: key must NOT include contrib/android/** - the
           # committed debug keystore (0273f31) lives there and would otherwise
           # invalidate this cache on any keystore-only change.
           key: android-packages-${{ env.APK_ARCH }}-${{ hashFiles('contrib/deterministic-build/**', 'contrib/make_packages.sh', '!contrib/android/.cache') }}
@@ -115,7 +115,7 @@ jobs:
           path: |
             .buildozer_qml/android/platform/build-${{ env.APK_ARCH }}/packages
             .buildozer_qml/android/platform/build-${{ env.APK_ARCH }}/build
-          # elektron fork: static key (no hashFiles) — p4a's per-package
+          # elektron fork: static key (no hashFiles) - p4a's per-package
           # .mark files already re-download changed recipes individually, so
           # hashing contrib/android/** only caused cold caches (the keystore
           # commit 0273f31 triggered one) and re-exposed the flaky recipe
@@ -125,7 +125,7 @@ jobs:
       - name: Build APK (debug)
         # elektron fork: p4a's downloader has no timeout, so a stalled recipe
         # download wedges the whole job (observed: pycryptodomex, pyqt_builder).
-        # Cap each attempt and retry — stale runs make forward progress since
+        # Cap each attempt and retry - stale runs make forward progress since
         # already-fetched packages stay marked on the cached path.
         shell: bash
         run: |
@@ -136,7 +136,7 @@ jobs:
               exit 0
             fi
             echo "::endgroup::"
-            echo "attempt ${attempt} failed — removing orphaned build containers"
+            echo "attempt ${attempt} failed - removing orphaned build containers"
             docker rm -f $(docker ps -q) > /dev/null 2>&1 || true
           done
           echo "all 3 build attempts failed"

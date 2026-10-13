@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Elektron Electrum – Market-API plugin (Qt part).
+# Elektron Electrum - Market-API plugin (Qt part).
 # Read-only market viewer: ELEK rate line + orderbook of the chosen pair.
 #
 # No custody, no swaps: this module never sends seeds, private keys, or
@@ -13,8 +13,6 @@ from PyQt6.QtCore import pyqtSlot
 from PyQt6.QtWidgets import (QComboBox, QDialog, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QTreeWidget,
                              QTreeWidgetItem, QVBoxLayout)
-
-import asyncio
 
 from electrum.gui.qt.util import Buttons, CancelButton, OkButton, WindowModalDialog
 from electrum.i18n import _
@@ -135,7 +133,7 @@ class Plugin(ElekMarketBase):
             icon = read_QIcon_from_bytes(
                 open(os.path.join(os.path.dirname(__file__), 'market.png'),
                      'rb').read())
-        except (FileNotFoundError, OSError):
+        except OSError:
             icon = None
         action = window.wallet_menu.addAction(
             _("&Elektron Market..."), lambda: self.open_dialog(window))

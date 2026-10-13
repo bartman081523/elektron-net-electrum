@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Elektron Electrum – Market-API plugin (base loader).
+# Elektron Electrum - Market-API plugin (base loader).
 # See market_api.py for the custody rules; base plugins are read-only.
 
 from typing import TYPE_CHECKING

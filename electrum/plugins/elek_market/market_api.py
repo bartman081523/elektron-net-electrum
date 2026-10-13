@@ -18,7 +18,7 @@ def _verified_ssl():
 
     On Android the bundled OpenSSL has no usable default CA directory, so
     aiohttp's plain `ssl=True` fails with ClientConnectorCertificateError.
-    Verify against certifi's bundle instead (electrum core ships it —
+    Verify against certifi's bundle instead (electrum core ships it -
     electrum/interface.py:74 does the same for its own sockets)."""
     import ssl
     try:
@@ -207,14 +207,14 @@ class KdfClient:
         return await self._post(body)
 
     async def my_orders_legacy(self) -> dict:
-        """Legacy `my_orders` — NOT mmrpc 2.0 (the v2 wrapper answers
+        """Legacy `my_orders` - NOT mmrpc 2.0 (the v2 wrapper answers
         NoSuchMethod; routed only in dispatcher_legacy.rs). Response:
         {result: {maker_orders: {uuid: {...}}, taker_orders: {..}}}."""
         return await self._post({"userpass": self.userpass,
                                  "method": "my_orders"})
 
     async def cancel_order(self, uuid: str) -> dict:
-        """Legacy `cancel_order` — uuid at top level (CancelOrderReq is
+        """Legacy `cancel_order` - uuid at top level (CancelOrderReq is
         deserialized from the request root)."""
         return await self._post({"userpass": self.userpass,
                                  "method": "cancel_order", "uuid": uuid})
@@ -241,7 +241,7 @@ class KdfClient:
                 "cancellable": bool(o.get("cancellable", False)),
                 "created_at": int(o.get("created_at", 0) or 0),
             })
-        # newest first — the app shows fresh orders on top
+        # newest first - the app shows fresh orders on top
         makers.sort(key=lambda m: m["created_at"], reverse=True)
         takers = []
         for uuid in (result.get("taker_orders") or {}):

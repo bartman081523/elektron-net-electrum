@@ -236,7 +236,7 @@ class BitcoinTestnet(AbstractNet):
     ADDRTYPE_P2SH = 196
     SEGWIT_HRP = "tb"
     BOLT11_HRP = SEGWIT_HRP
-    # Elektron Net testnet genesis (the "elektron testnet" chain) — matches
+    # Elektron Net testnet genesis (the "elektron testnet" chain) - matches
     # the fork's elektrond -testnet self-contained testnet as the wallet's
     # self-spins in docker via MM_LOCAL_TESTNET=1 (genesis check in
     # docker/start_testnet_infra.sh: GENESIS="00000078233832…c73e4f").

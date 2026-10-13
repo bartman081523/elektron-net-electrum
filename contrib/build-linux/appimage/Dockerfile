@@ -8,8 +8,11 @@ ENV LC_ALL=C.UTF-8 LANG=C.UTF-8
 ENV DEBIAN_FRONTEND=noninteractive
 
 # need ca-certificates before using snapshot packages
-RUN apt update -qq > /dev/null && apt install -qq --yes --no-install-recommends \
-    ca-certificates
+# elektron fork: bullseye is EOL - the live debian-security index still
+# advertises files that were purged from the pool; only the archive serves them.
+RUN printf 'deb http://archive.debian.org/debian bullseye main\ndeb http://archive.debian.org/debian-security bullseye-security main\n' > /etc/apt/sources.list && \
+    apt update -qq -o Acquire::Check-Valid-Until=false > /dev/null && \
+    apt install -qq --yes --no-install-recommends ca-certificates
 
 # pin the distro packages
 COPY apt.sources.list /etc/apt/sources.list
