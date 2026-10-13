@@ -30,6 +30,7 @@ BUILTIN_PAIRS = [
     ("tELEK", "tBTC"),
     ("tELEK", "tELEK2"),
     ("tELEK", "SEPOLIAETH"),
+    ("tBTC", "SEPOLIAETH"),
 ]
 
 

@@ -5,10 +5,12 @@
 #   * fetches FX snapshot: GET  <endpoint>/fx/rates.json
 #   * fetches orderbook:   POST <endpoint>/rpc  {"method":"orderbook", ...}
 #   * the elek-web proxy injects userpass server-side, so this module never
-#     handles secrets.
-#   * strictly read-only; no swaps/deposits/withdrawals in this client.
+#     handles market secrets.
+#   * the market layer stays read-only; money-moving calls (buy/setprice,
+#     enable/my_balance) target the user's OWN client-kdf (KdfClient only).
 #
 import json
+from decimal import Decimal, localcontext
 
 import aiohttp
 
@@ -35,6 +37,50 @@ class MarketApiError(Exception):
         self.code = code
         self.body = body
         super().__init__(f"market-api {code}: {str(body)[:200]}")
+
+
+# SEPOLIAETH legacy-`enable` extras, copied verbatim from the #77 cross-swap
+# e2e harness (scratches/77eth/p77_enable.py / p77_fed_seedfix.py) - these
+# exact values carried the both-sides-Finished ETH<->UTXO swaps. EIP-55
+# casing is mandatory for the contract address (eth.rs rejects otherwise);
+# coins-live.json does NOT carry urls/swap_contract_address, so the app must
+# merge these in on enable.
+SEPOLIA_SWAP_CONTRACT = "0xeA6D65434A15377081495a9E7C5893543E7c32cB"
+SEPOLIA_RPC_URLS = [
+    "https://ethereum-sepolia-rpc.publicnode.com",
+    "https://sepolia.drpc.org",
+]
+
+
+def sepolia_enable_params() -> dict:
+    return {
+        "urls": list(SEPOLIA_RPC_URLS),
+        "swap_contract_address": SEPOLIA_SWAP_CONTRACT,
+    }
+
+
+# Coins tradeable in the app's TESTNET market (the #91 mandate: btc, eth,
+# elek). Mainnet pairs land with the #73 branch split.
+TESTNET_COINS = ("tELEK", "tBTC", "SEPOLIAETH")
+
+
+def dec_str(x) -> str:
+    """Decimal string without float artifacts (no 0.35000000000000003)."""
+    d = x if isinstance(x, Decimal) else Decimal(str(x))
+    s = format(d.normalize(), "f")
+    return s or "0"
+
+
+def dec_mul(a, b) -> str:
+    return dec_str(Decimal(dec_str(a)) * Decimal(dec_str(b)))
+
+
+def dec_div(a, b, prec: int = 12) -> str:
+    """a/b with bounded precision (keeps reciprocals human-shaped:
+    dec_div('1', '3') == '0.333333333333')."""
+    with localcontext() as ctx:
+        ctx.prec = prec
+        return dec_str(Decimal(dec_str(a)) / Decimal(dec_str(b)))
 
 
 class MarketApi:
@@ -301,3 +347,62 @@ class KdfClient:
             if t in KdfClient.FINAL_EVENTS:
                 state = t
         return {"types": types, "state": state}
+
+    async def enable_coin(self, coin: str, params: dict | None = None) -> dict:
+        """Legacy `enable` (top-level fields; the mmrpc 2.0 wrapper does not
+        route it). `params` merges extra fields - SEPOLIAETH requires
+        `urls` + `swap_contract_address` (sepolia_enable_params)."""
+        body = {"userpass": self.userpass, "method": "enable",
+                "coin": coin, "mm2": 1}
+        if params:
+            body.update(params)
+        return await self._post(body)
+
+    async def get_enabled_coins(self) -> list:
+        """Legacy `get_enabled_coins` - answers a coin-name list, wrapped as
+        {result: [...]} or bare depending on build; parse defensively."""
+        raw = await self._post({"userpass": self.userpass,
+                                "method": "get_enabled_coins"})
+        return self.parse_enabled_coins(raw)
+
+    @staticmethod
+    def parse_enabled_coins(raw) -> list:
+        """Accepts {result: [...]}, bare [...], {result: {coins: [...]}} -
+        entries are coin-name strings (dicts tolerated)."""
+        nodes = [raw]
+        if isinstance(raw, dict):
+            nodes += [raw.get("result"), (raw.get("result") or {}).get("coins")
+                      if isinstance(raw.get("result"), dict) else None]
+        for node in nodes:
+            if isinstance(node, list):
+                out = []
+                for c in node:
+                    if isinstance(c, dict):
+                        c = c.get("coin") or c.get("ticker")
+                    if c:
+                        out.append(str(c))
+                return out
+        return []
+
+    async def my_balance(self, coin: str) -> dict:
+        """Legacy `my_balance` (v1 fields) - answers TOP-LEVEL
+        {coin, balance, address, unspendable_balance}; the mmrpc 2.0 wrapper
+        answers 400 for it (#70 evidence)."""
+        return await self._post({"userpass": self.userpass,
+                                 "method": "my_balance", "coin": coin})
+
+    @staticmethod
+    def parse_balance(raw, coin: str = "") -> dict:
+        """Tolerates the legacy top-level shape and a {result: {...}} wrap;
+        surfaces daemon errors ({"error": ...} / MM2 HTTPError) as `error`."""
+        node = raw if isinstance(raw, dict) else {}
+        res = node.get("result")
+        if isinstance(res, dict):
+            node = res
+        return {
+            "coin": str(node.get("coin") or coin),
+            "balance": str(node.get("balance", "0") or "0"),
+            "address": str(node.get("address", "") or ""),
+            "unspendable": str(node.get("unspendable_balance", "0") or "0"),
+            "error": str(node.get("error") or node.get("HTTPError") or ""),
+        }

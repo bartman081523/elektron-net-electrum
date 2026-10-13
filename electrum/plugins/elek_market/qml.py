@@ -13,7 +13,9 @@ from electrum.plugin import hook
 from electrum.gui.common_qt.plugins import PluginQObject
 
 from . import Plugin as ElekMarketBase
-from .market_api import MarketApi, MarketApiError, KdfClient
+from .market_api import (KdfClient, TESTNET_COINS, MarketApi,
+                         MarketApiError, dec_div, dec_mul,
+                         sepolia_enable_params)
 
 
 def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
@@ -69,6 +71,11 @@ class QMarketSignalObject(PluginQObject):
         MarketPlugin.check_status()
         MarketPlugin.swapUuid / MarketPlugin.swapStatus
         MarketPlugin.myOrders / MarketPlugin.lastMakerOrder
+        # #91 multi-coin:
+        MarketPlugin.refresh_enabled()
+        MarketPlugin.enable_coin('SEPOLIAETH')   # merges urls + contract
+        MarketPlugin.refresh_balances()
+        MarketPlugin.coins / MarketPlugin.enabledCoins / MarketPlugin.balances
     """
 
     ratesReady = pyqtSignal()
@@ -77,6 +84,8 @@ class QMarketSignalObject(PluginQObject):
     swapStatusReady = pyqtSignal()
     myOrdersReady = pyqtSignal()
     makerOrderReady = pyqtSignal()
+    enabledReady = pyqtSignal()    # #91: enabled-set refreshed
+    balancesReady = pyqtSignal()   # #91: balance snapshot refreshed
     error = pyqtSignal(str)
 
     _name = _('Elektron Market')
@@ -92,6 +101,10 @@ class QMarketSignalObject(PluginQObject):
         self._swap_status = None
         self._my_orders = {}
         self._last_maker = None
+        # #91 multi-coin state: which coins the client-kdf enabled +
+        # their last known balances (coin -> parse_balance dict)
+        self._enabled = []
+        self._balances = {}
         # #89 taker-retry state: the placed order's view terms + retry bookkeeping
         self._taker = None
         self._taker_since = 0.0
@@ -222,8 +235,10 @@ class QMarketSignalObject(PluginQObject):
         if kind == 'ask':
             res = self._post_buy_legacy(base, rel, volume, price)
         else:  # 'bid': kdf-native buy(rel, base), reciprocal mapping
-            p, v = float(price), float(volume)
-            res = self._post_buy_legacy(rel, base, str(v * p), str(1.0 / p))
+            p, v = float(price), float(volume)  # validate; strings carry on
+            res = self._post_buy_legacy(rel, base,
+                                        dec_mul(volume, price),
+                                        dec_div("1", price))
         self._finish_buy(res)
 
     def _maybe_retry(self):
@@ -313,14 +328,16 @@ class QMarketSignalObject(PluginQObject):
             if p <= 0 or v <= 0:
                 raise ValueError('price and volume must be > 0')
             if side == 'ask':
+                # validated inputs pass through as the ORIGINAL strings -
+                # str(float) would re-shape 0.1 -> 0.100000000000000006
                 k_base, k_rel = base, rel
-                k_price, k_vol = str(p), str(v)
-                k_min = str(v / 10.0)
+                k_price, k_vol = price, volume
+                k_min = dec_div(volume, "10")
             elif side == 'bid':
-                proceeds = v * p
+                proceeds = dec_mul(volume, price)
                 k_base, k_rel = rel, base
-                k_price, k_vol = str(1.0 / p), str(proceeds)
-                k_min = str(proceeds / 10.0)
+                k_price, k_vol = dec_div("1", price), proceeds
+                k_min = dec_div(proceeds, "10")
             else:
                 raise ValueError(
                     f"side must be 'ask' or 'bid', got {side!r}")
@@ -436,6 +453,93 @@ class QMarketSignalObject(PluginQObject):
     @pyqtProperty('QVariant')
     def swapStatus(self):
         return self._swap_status
+
+    # ---- #91 multi-coin: enabled-set + balances on the client-kdf ----
+
+    @pyqtProperty('QVariantList')
+    def coins(self):
+        return list(TESTNET_COINS)
+
+    @pyqtProperty('QVariant')
+    def enabledCoins(self):
+        return self._enabled
+
+    @pyqtProperty('QVariant')
+    def balances(self):
+        return self._balances
+
+    @pyqtSlot()
+    def refresh_enabled(self):
+        """Refresh the coin set enabled on the client-kdf. Without a
+        swap endpoint configured this is a silent no-op (the QML strip
+        shows plain chips, no RPC spam against a missing daemon)."""
+        if not self.swapConfigured:
+            self._enabled = []
+            self.enabledReady.emit()
+            return
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
+        fut = _asyncio.run_coroutine_threadsafe(
+            self._get_kdf_cfg().get_enabled_coins(), get_asyncio_loop())
+        try:
+            self._enabled = sorted(set(fut.result(timeout=30)))
+            self.enabledReady.emit()
+            self.refresh_balances()
+        except Exception as e:
+            self.error.emit(str(e))
+
+    @pyqtSlot(str)
+    def enable_coin(self, coin: str):
+        """Enable one coin on the client-kdf (legacy `enable`). SEPOLIAETH
+        merges urls + swap_contract_address - coins-live.json does NOT
+        carry them; EIP-55 casing of the address is mandatory."""
+        if not self.swapConfigured:
+            self.error.emit('swap_endpoint not configured')
+            return
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
+        params = sepolia_enable_params() if coin == 'SEPOLIAETH' else None
+        fut = _asyncio.run_coroutine_threadsafe(
+            self._get_kdf_cfg().enable_coin(coin, params),
+            get_asyncio_loop())
+        try:
+            res = fut.result(timeout=60)
+            # legacy enable answers 200 with {"error": ...} on failure
+            err = res.get("error") if isinstance(res, dict) else None
+            if err:
+                self.error.emit(str(err)[:200])
+                return
+            if coin not in self._enabled:
+                self._enabled = sorted(self._enabled + [coin])
+                self.enabledReady.emit()
+            self.refresh_balances()
+        except Exception as e:
+            self.error.emit(str(e))
+
+    @pyqtSlot()
+    def refresh_balances(self):
+        """my_balance for every enabled coin (legacy fields; parse_balance
+        tolerates wrapper shapes and surfaces daemon errors per coin)."""
+        if not self._enabled:
+            self._balances = {}
+            self.balancesReady.emit()
+            return
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
+        loop = get_asyncio_loop()
+        kdf = self._get_kdf_cfg()
+        out = {}
+        for coin in self._enabled:
+            fut = _asyncio.run_coroutine_threadsafe(
+                kdf.my_balance(coin), loop)
+            try:
+                raw = fut.result(timeout=30)
+                out[coin] = KdfClient.parse_balance(raw, coin=coin)
+            except Exception as e:
+                out[coin] = {"coin": coin, "balance": "0", "address": "",
+                             "unspendable": "0", "error": str(e)[:200]}
+        self._balances = out
+        self.balancesReady.emit()
 
 
 class Plugin(ElekMarketBase):
