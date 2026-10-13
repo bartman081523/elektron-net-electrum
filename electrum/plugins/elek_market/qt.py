@@ -27,10 +27,9 @@ if TYPE_CHECKING:
 
 
 BUILTIN_PAIRS = [
-    ("tELEK", "tBTC"),
-    ("tELEK", "tELEK2"),
-    ("tELEK", "SEPOLIAETH"),
-    ("tBTC", "SEPOLIAETH"),
+    ("ELEK", "BTC"),
+    ("ELEK", "ETH"),
+    ("BTC", "ETH"),
 ]
 
 
@@ -82,7 +81,7 @@ class MarketDialog(QDialog):
 
     @pyqtSlot()
     def refresh(self):
-        pair = self.pair_box.currentData() or ("tELEK", "tBTC")
+        pair = self.pair_box.currentData() or ("ELEK", "BTC")
         asyncio.run_coroutine_threadsafe(
             self._refresh_async(*pair), get_asyncio_loop())
 

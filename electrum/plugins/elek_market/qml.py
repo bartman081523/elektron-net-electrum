@@ -13,9 +13,9 @@ from electrum.plugin import hook
 from electrum.gui.common_qt.plugins import PluginQObject
 
 from . import Plugin as ElekMarketBase
-from .market_api import (KdfClient, TESTNET_COINS, MarketApi,
-                         MarketApiError, dec_div, dec_mul,
-                         sepolia_enable_params)
+from .market_api import (KdfClient, MAINNET_COINS, MarketApi, MarketApiError,
+                         dec_div, dec_mul, electrum_servers,
+                         eth_mainnet_enable_params, sepolia_enable_params)
 
 
 def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
@@ -458,7 +458,7 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtProperty('QVariantList')
     def coins(self):
-        return list(TESTNET_COINS)
+        return list(MAINNET_COINS)
 
     @pyqtProperty('QVariant')
     def enabledCoins(self):
@@ -490,18 +490,25 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot(str)
     def enable_coin(self, coin: str):
-        """Enable one coin on the client-kdf (legacy `enable`). SEPOLIAETH
-        merges urls + swap_contract_address - coins-live.json does NOT
-        carry them; EIP-55 casing of the address is mandatory."""
+        """Enable one coin on the client-kdf (#73 mainnet): UTXO coins are
+        electrum-only here (the app ships no native RPC node) -> legacy
+        `electrum` method with a servers array; ETH uses legacy `enable`
+        with urls + swap_contract_address (EIP-55 casing mandatory). The
+        SEPOLIAETH branch stays for cross-branch template parity."""
         if not self.swapConfigured:
             self.error.emit('swap_endpoint not configured')
             return
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
-        params = sepolia_enable_params() if coin == 'SEPOLIAETH' else None
-        fut = _asyncio.run_coroutine_threadsafe(
-            self._get_kdf_cfg().enable_coin(coin, params),
-            get_asyncio_loop())
+        if coin in ('ELEK', 'BTC'):
+            coro = self._get_kdf_cfg().enable_electrum(
+                coin, electrum_servers(coin))
+        else:
+            params = (sepolia_enable_params() if coin == 'SEPOLIAETH'
+                      else eth_mainnet_enable_params() if coin == 'ETH'
+                      else None)
+            coro = self._get_kdf_cfg().enable_coin(coin, params)
+        fut = _asyncio.run_coroutine_threadsafe(coro, get_asyncio_loop())
         try:
             res = fut.result(timeout=60)
             # legacy enable answers 200 with {"error": ...} on failure

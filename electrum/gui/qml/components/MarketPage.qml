@@ -5,19 +5,21 @@ import org.electrum 1.0
 
 import "controls"
 
-// #91 multi-coin market page: pair selector (tELEK / tBTC / SEPOLIAETH -
-// view-frame pairs, ELEK-ish coin as base), balance chips with tap-to-enable,
-// clickable order book. #92 click-to-fulfill: tapping a quote opens a
-// prefilled taker dialog (buy_taker against an ask / buy against a bid).
+// #91 multi-coin market page: pair selector (view-frame pairs), balance
+// chips with tap-to-enable, clickable order book. #92 click-to-fulfill:
+// tapping a quote opens a prefilled taker dialog (buy_taker against an
+// ask / buy against a bid).
+// #73 branch split: THIS branch is the MAINNET market (ELEK / BTC / ETH);
+// the testnet pairs (tELEK / tBTC / SEPOLIAETH) live on the default branch.
 ElDialog {
     id: root
 
     title: qsTr('Elektron Market')
 
     // view-frame convention: pairs sit with the ELEK-ish coin as base
-    // (("tELEK","tBTC") default - zero migration from the former fixed pair)
-    property string pairBase: 'tELEK'
-    property string pairRel: 'tBTC'
+    // (ELEK/BTC default; BTC/ETH is the only pair without an ELEK base)
+    property string pairBase: 'ELEK'
+    property string pairRel: 'BTC'
     // best book prices in view terms (rel per base); restored on every book
     // refresh since the book order is not guaranteed sorted (asks arrived
     // 4.2/3.5/2.0 in the #83 federation mesh)
@@ -27,7 +29,7 @@ ElDialog {
     // so handlers re-assign these on the ready signals)
     property var balances: ({})
     property var enabledList: []
-    property var coins: ['tELEK', 'tBTC', 'SEPOLIAETH']
+    property var coins: ['ELEK', 'BTC', 'ETH']
     // #92 fulfill-dialog state
     property string fSide: 'ask'
     property string fPrice: ''
@@ -222,9 +224,9 @@ ElDialog {
                     Layout.fillWidth: true
                     textRole: 'p'
                     model: ListModel {
-                        ListElement { p: 'tELEK / tBTC'; b: 'tELEK'; r: 'tBTC' }
-                        ListElement { p: 'tELEK / SEPOLIAETH'; b: 'tELEK'; r: 'SEPOLIAETH' }
-                        ListElement { p: 'tBTC / SEPOLIAETH'; b: 'tBTC'; r: 'SEPOLIAETH' }
+                        ListElement { p: 'ELEK / BTC'; b: 'ELEK'; r: 'BTC' }
+                        ListElement { p: 'ELEK / ETH'; b: 'ELEK'; r: 'ETH' }
+                        ListElement { p: 'BTC / ETH'; b: 'BTC'; r: 'ETH' }
                     }
                     onActivated: function (index) {
                         var b = model.get(index).b

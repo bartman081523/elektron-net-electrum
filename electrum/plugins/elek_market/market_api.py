@@ -59,8 +59,58 @@ def sepolia_enable_params() -> dict:
     }
 
 
+# ---- #73 mainnet activation constants (branch elektron/61-market-mainnet) -
+# Same provenance rule as the SEPOLIA block above: every value carries live
+# evidence, nothing guessed.
+
+# UTXO electrum-activation servers. The app ships no native RPC node, so
+# UTXO coins MUST use the legacy `electrum` method with a servers array -
+# legacy `enable` forces UtxoRpcMode::Native (utxo.rs from_legacy_req; kdf
+# has NO conf-based electrum fallback). ELEK: the public Elektron electrs
+# (fork chains/mainnet/servers.json; TCP-live-probed 2026-10-13; phone #85
+# used electrs.elektron-net.org with the correct fork genesis). BTC: cipig
+# cluster - coins-mainnet.json lists electrum1+electrum3, but electrum3
+# refuses TCP from this network (both 2026-10-13 probes); electrum2 is
+# TCP-live AND chain-identical (both answered ElectrumX 2.0.0, height
+# 971208), so electrum1+electrum2 are the two live servers.
+ELEK_ELECTRUM_SERVERS = ("electrs.elektron-net.org:50002",
+                         "electrs2.elektron-net.org:50002")
+BTC_ELECTRUM_SERVERS = ("btc.electrum1.cipig.net:10000",
+                        "btc.electrum2.cipig.net:10000")
+
+# ETH mainnet enable extras: RPC twins of the SEPOLIA set (both alive with
+# eth_chainId "0x1", probed 2026-10-13) + the komodo mainnet swap contract,
+# whose EIP-55 casing is byte-identical in kdf eth.rs:227 (etherscan
+# comment) and eth_tests.rs:730, recomputed via keccak (2026-10-13).
+ETH_MAINNET_SWAP_CONTRACT = "0x8500AFc0bc5214728082163326C2FF0C73f4a871"
+ETH_MAINNET_RPC_URLS = [
+    "https://ethereum-rpc.publicnode.com",
+    "https://eth.drpc.org",
+]
+
+# Coins tradeable in the app's MAINNET market (the #91 mandate: btc, eth,
+# elek on the #73 branch split).
+MAINNET_COINS = ("ELEK", "BTC", "ETH")
+
+
+def eth_mainnet_enable_params() -> dict:
+    return {
+        "urls": list(ETH_MAINNET_RPC_URLS),
+        "swap_contract_address": ETH_MAINNET_SWAP_CONTRACT,
+    }
+
+
+def electrum_servers(ticker: str) -> list:
+    """Legacy `electrum` activation servers for a mainnet UTXO ticker
+    (#73): [{url, protocol}]; ETH has none (eth.rs activates by urls)."""
+    urls = {"ELEK": ELEK_ELECTRUM_SERVERS,
+            "BTC": BTC_ELECTRUM_SERVERS}.get(ticker.upper()) or ()
+    return [{"url": u, "protocol": "TCP"} for u in urls]
+
+
 # Coins tradeable in the app's TESTNET market (the #91 mandate: btc, eth,
-# elek). Mainnet pairs land with the #73 branch split.
+# elek). Testnet pairs stay the DEFAULT; mainnet pairs live above (branch
+# split #73).
 TESTNET_COINS = ("tELEK", "tBTC", "SEPOLIAETH")
 
 
@@ -356,6 +406,15 @@ class KdfClient:
                 "coin": coin, "mm2": 1}
         if params:
             body.update(params)
+        return await self._post(body)
+
+    async def enable_electrum(self, coin: str, servers: list) -> dict:
+        """Legacy `electrum` activation (#73) - the ONLY working mode for
+        UTXO coins without a native RPC node: legacy `enable` answers
+        UtxoRpcMode::Native (utxo.rs from_legacy_req reads req["servers"]
+        ONLY for method "electrum"; kdf has no conf-based fallback)."""
+        body = {"userpass": self.userpass, "method": "electrum",
+                "coin": coin, "servers": servers, "mm2": 1}
         return await self._post(body)
 
     async def get_enabled_coins(self) -> list:
