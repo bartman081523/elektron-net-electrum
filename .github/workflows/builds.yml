@@ -74,7 +74,10 @@ jobs:
     name: "build: Android (${{ inputs.android_arch || 'arm64-v8a' }})"
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'android' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    # elektron fork: 3 attempts x 90m + setup (~285m) must fit under the job
+    # cap - a COLD p4a build (branch-scoped cache miss, observed 2026-10-14
+    # on main) exceeds the old 180m job cap before attempt 2 could finish.
+    timeout-minutes: 300
     env:
       APK_ARCH: ${{ inputs.android_arch || 'arm64-v8a' }}
     steps:
@@ -127,11 +130,18 @@ jobs:
         # download wedges the whole job (observed: pycryptodomex, pyqt_builder).
         # Cap each attempt and retry - stale runs make forward progress since
         # already-fetched packages stay marked on the cached path.
+        # COLD builds meanwhile recompile the PyQt6/QtQml/QtQuick sip sources
+        # inside fresh container /tmp on EVERY attempt (nothing survives the
+        # docker rm between attempts) - measured 2026-10-14: QtQml alone
+        # ~49 min, the run died still in QtQuick after 3x timeout 50m. 90m
+        # gives the final attempt room to carry a cold build over the line;
+        # branch-scope of actions/cache means a dispatch on a branch without
+        # its own saved cache is the usual way this cold path gets hit.
         shell: bash
         run: |
           for attempt in 1 2 3; do
             echo "::group::Build attempt ${attempt}"
-            if timeout 50m ./contrib/android/build.sh qml "$APK_ARCH" debug; then
+            if timeout 90m ./contrib/android/build.sh qml "$APK_ARCH" debug; then
               echo "::endgroup::"
               exit 0
             fi
