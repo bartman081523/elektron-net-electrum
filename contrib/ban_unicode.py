@@ -30,6 +30,8 @@ EXCLUDE_EXTENSIONS = {
 UNICODE_WHITELIST = {
     "💬", "🗯", "⚠", chr(0xfe0f), "✓", "▷", "▽", "…", "•", "█", "™", "≈",
     "á", "é", "’",
+    # German letters (fork ships German UI strings, e.g. MarketPage.qml qsTr).
+    "ä", "ö", "ü", "Ä", "Ö", "Ü", "ß",
     "│", "─", "└", "├", "📋",
 }
 
