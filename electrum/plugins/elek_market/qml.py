@@ -128,7 +128,11 @@ class QMarketSignalObject(PluginQObject):
         # runtime stays a phase-'unavailable' shell (daemon comes from the
         # configured swap_endpoint). Phase changes surface via kdfStatusReady.
         self._kdf_rt = kdf_runtime.KdfRuntime(
-            base_dir=self.plugin.config.electrum_path,
+            # electrum_path is a METHOD on SimpleConfig (returns the per-chain
+            # datadir) - call it, or os.path.join gets a bound method object
+            # (device crash: "TypeError: expected str, bytes or os.PathLike
+            # object, not method" at kdf_runtime.KdfRuntime.__init__).
+            base_dir=self.plugin.config.electrum_path(),
             # #97: plugin network settings reach the runtime at construction
             # only; they are resolved into the boot conf on every start.
             seednode=self.plugin.net_seednode,
