@@ -29,11 +29,15 @@ PIN_SHA256 = "3be96442ff41a93664f26197d589ca48ed1643831ecd5eddba98c78d692939d1"
 
 EM_AARCH64 = 183  # ELF e_machine for aarch64
 
-# library manifests must not carry a package attribute (AGP merges against
-# the app's manifest); a bare manifest element is the whole file
+# the manifest merger rejects library AAR manifests without a package
+# declaration ("Missing 'package' declaration in manifest at
+# [:elek-kdf-runtime:]" - run 39099856743); the namespace must not clash
+# with the app package (org.elektronnet.market.elektronelectrum)
+AAR_PACKAGE = "org.elektronnet.market.kdfruntime"
 AAR_MANIFEST = (
     '<?xml version="1.0" encoding="utf-8"?>\n'
-    '<manifest xmlns:android="http://schemas.android.com/apk/res/android"/>\n'
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+    ' package="%s"/>\n' % AAR_PACKAGE
 )
 
 # classes.jar must exist in a valid AAR and be a jar (it needs a manifest);
