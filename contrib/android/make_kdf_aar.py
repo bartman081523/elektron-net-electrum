@@ -2,9 +2,14 @@
 # Task #95: build the elek-kdf-runtime AAR that ships the embedded market
 # runtime (kdf) binary inside the APK.
 #
-# Gradle merges an AAR's lib/<abi>/*.so entries into the app's jniLibs, so
-# the APK ends up with lib/arm64-v8a/libkdfbin.so, which the package
-# manager extracts into nativeLibraryDir at install time - the one
+# An AAR's native libraries must live under jni/<abi>/ (AAR format spec);
+# AGP's exploded-AAR merge ignores lib/<abi>/. Proven by run 39106251178
+# (b94, controlled comparison in the same APK): libzxingcpp_android.so -
+# packaged by gradle itself under jni/ - landed in the APK, while our
+# lib/arm64-v8a/libkdfbin.so entry was silently dropped and the APK had no
+# kdf entries at all. With the correct arcname the APK ends up with
+# lib/arm64-v8a/libkdfbin.so, which the package manager extracts into
+# nativeLibraryDir at install time - the one
 # app-owned, exec-permitted location for targetSdk >= 29 (W^X applies only
 # to app-writable /data paths).
 #
@@ -84,7 +89,7 @@ def write_aar(out_path, so_entries):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--aar", required=True, help="output AAR path")
-    p.add_argument("--lib", help="ELF binary to ship as lib/<abi>/libkdfbin.so")
+    p.add_argument("--lib", help="ELF binary to ship as jni/<abi>/libkdfbin.so")
     p.add_argument("--abi", default="arm64-v8a", help="ABI directory for the library entry")
     p.add_argument("--pin", default=PIN_SHA256, help="expected sha256 of --lib")
     args = p.parse_args()
@@ -94,7 +99,7 @@ def main():
         if not os.path.isfile(args.lib):
             fail("%s: kdf runtime binary not found (fetch step missing?)" % args.lib)
         verify_elf(args.lib, args.pin)
-        entries.append(("lib/%s/libkdfbin.so" % args.abi, args.lib))
+        entries.append(("jni/%s/libkdfbin.so" % args.abi, args.lib))
     write_aar(args.aar, entries)
     print("make_kdf_aar: wrote %s (%s)" % (
         args.aar, entries[0][0] if entries else "empty, no lib for this arch"))

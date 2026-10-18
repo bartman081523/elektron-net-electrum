@@ -1,10 +1,13 @@
 #!/bin/bash
 
 # Task #95: package the embedded market runtime (kdf binary) as an AAR that
-# buildozer_qml.spec lists in android.add_aars. Gradle merges the AAR's
-# lib/<abi>/libkdfbin.so into the APK's jniLibs; the package manager then
-# extracts it into nativeLibraryDir, where exec is permitted for
-# targetSdk >= 29.
+# buildozer_qml.spec lists in android.add_aars. AGP's exploded-AAR merge
+# only reads native libraries from the AAR's jni/<abi>/ folder (AAR spec);
+# anything else (e.g. lib/<abi>/) is silently dropped - proven by run
+# 39106251178 (b94): libzxingcpp_android.so, packaged by gradle itself under
+# jni/, landed in the APK while our lib/arm64-v8a entry did not. The APK
+# then holds lib/arm64-v8a/libkdfbin.so, which the package manager extracts
+# into nativeLibraryDir, where exec is permitted for targetSdk >= 29.
 #
 # Supply path: the builds.yml fetch step downloads the pinned prebuilt from
 # the bartman081523/elektron-net-kdf release "phone-kdf-runtime-aarch64-84"
