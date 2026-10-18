@@ -9,8 +9,10 @@
 #
 # Config bootstrap: <electrum_path>/kdf/MM2.json is generated ONCE with a
 # fresh random passphrase and rpc_password, then reused so the netid-8888
-# identity and swap history survive app restarts. The seed must never be
-# logged. Coins are the task-#84 device template (SEPOLIAETH + the two
+# identity and swap history survive app restarts. A persisted rpc_password
+# that fails the kdf password policy is regenerated in place (the b93/b94
+# confs carried one that mm2 rejects); the passphrase is never rewritten -
+# that is the identity. The seed must never be logged. Coins are the task-#84 device template (SEPOLIAETH + the two
 # fork-testnet UTXO slots), electrum servers point at 127.0.0.1:50005
 # (adb-reversed by the market flow), seednode is the Render federation
 # entry. A stopped-but-live previous instance (app restart) is terminated
@@ -181,6 +183,51 @@ def _ensure_lightning_coins(conf: dict) -> None:
                  and coin + "-lightning" not in by_name]
     if additions:
         conf["coins"] = list(coins) + additions
+
+
+# kdf validates conf["rpc_password"] at mm2 startup against its password
+# policy (mm2src/mm2_main/src/mm2.rs:193 -> mm2src/common/password_policy.rs):
+# at least 8 characters with one digit, one lowercase, one uppercase and one
+# special (non-alphanumeric) character each, no run of 3 identical
+# characters, and "password" banned (case-insensitive). secrets.token_hex()
+# emits lowercase hex only and fails the upper + special rules - mm2
+# initialization exited rc=4 on device ("Password should contain at least 1
+# uppercase character", kdf.log 2026-10-18). Only rpc_password is validated;
+# the passphrase (the wallet seed) is not.
+_ASCII_LOWER = "abcdefghijklmnopqrstuvwxyz"
+_ASCII_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_ASCII_DIGITS = "0123456789"
+
+
+def _password_policy_ok(pw) -> bool:
+    """Exact python port of the kdf rpc_password policy (see above)."""
+    if not isinstance(pw, str) or len(pw) < 8:
+        return False
+    if "password" in pw.lower():
+        return False
+    if not any(c in _ASCII_DIGITS for c in pw):
+        return False
+    if not any(c in _ASCII_LOWER for c in pw):
+        return False
+    if not any(c in _ASCII_UPPER for c in pw):
+        return False
+    if all(c in _ASCII_DIGITS + _ASCII_LOWER + _ASCII_UPPER for c in pw):
+        return False  # every character alphanumeric: no special character
+    for a, b, c in zip(pw, pw[1:], pw[2:]):
+        if a == b == c:
+            return False  # 3 identical characters in a row
+    return True
+
+
+def _gen_rpc_password() -> str:
+    """Policy-conform rpc_password: the "K_" prefix carries the required
+    uppercase + special characters, the hex body the digits + lowercase.
+    The loop re-rolls when the hex body itself trips a rule (astronomically
+    rare - e.g. an all-letter body has no digit)."""
+    while True:
+        pw = "K_" + secrets.token_hex(16)
+        if _password_policy_ok(pw):
+            return pw
 
 
 # Coin entries are the task-#84 device-node template, verbatim (that
@@ -418,20 +465,27 @@ class KdfRuntime:
     def _ensure_conf(self) -> dict:
         """Existing MM2.json is reused (identity + history live there);
         a fresh one gets newly generated secrets for passphrase and
-        rpc_password, persisted once."""
+        rpc_password, persisted once. A persisted rpc_password that fails
+        the kdf policy is regenerated in place - the b93/b94 confs carried
+        a token_hex() rpc_password that mm2 rejects at startup, and it
+        would otherwise poison every boot. The heal never touches the
+        passphrase (the netid-8888 identity)."""
+        conf = None
         try:
             with open(self.conf_path) as f:
-                return json.load(f)
+                conf = json.load(f)
         except FileNotFoundError:
             pass
-        conf = _base_conf()
-        conf["passphrase"] = secrets.token_hex(32)
-        conf["rpc_password"] = secrets.token_hex(32)
-        conf["dbdir"] = self.db_dir
-        os.makedirs(self.dir, exist_ok=True)
-        with open(self.conf_path, "w") as f:
-            json.dump(conf, f, indent=2)
-        os.chmod(self.conf_path, 0o600)
+        if not isinstance(conf, dict):
+            conf = _base_conf()
+            conf["passphrase"] = secrets.token_hex(32)
+        if not _password_policy_ok(conf.get("rpc_password")):
+            conf["rpc_password"] = _gen_rpc_password()
+            conf["dbdir"] = self.db_dir
+            os.makedirs(self.dir, exist_ok=True)
+            with open(self.conf_path, "w") as f:
+                json.dump(conf, f, indent=2)
+            os.chmod(self.conf_path, 0o600)
         return conf
 
     # -- process lifecycle --------------------------------------------------
