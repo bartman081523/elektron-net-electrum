@@ -159,7 +159,8 @@ android.add_jars = .buildozer/android/platform/*/build/libs_collections/Elektron
 android.add_aars =
     contrib/android/.cache/aars/BarcodeScannerView.aar,
     contrib/android/.cache/aars/CameraView.aar,
-    contrib/android/.cache/aars/zxing-cpp.aar
+    contrib/android/.cache/aars/zxing-cpp.aar,
+    contrib/android/.cache/aars/elek-kdf-runtime.aar
 
 
 # (list) List of Java files to add to the android project (can be java or a

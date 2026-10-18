@@ -6,6 +6,8 @@
 
 from typing import TYPE_CHECKING
 
+import os
+
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, pyqtProperty
 
 from electrum.i18n import _
@@ -13,6 +15,7 @@ from electrum.plugin import hook
 from electrum.gui.common_qt.plugins import PluginQObject
 
 from . import Plugin as ElekMarketBase
+from . import kdf_runtime
 from .market_api import (KdfClient, MAINNET_COINS, MarketApi, MarketApiError,
                          dec_div, dec_mul, electrum_servers,
                          eth_mainnet_enable_params, sepolia_enable_params)
@@ -86,6 +89,7 @@ class QMarketSignalObject(PluginQObject):
     makerOrderReady = pyqtSignal()
     enabledReady = pyqtSignal()    # #91: enabled-set refreshed
     balancesReady = pyqtSignal()   # #91: balance snapshot refreshed
+    kdfStatusReady = pyqtSignal()  # #95: embedded kdf runtime phase changed
     error = pyqtSignal(str)
 
     _name = _('Elektron Market')
@@ -109,6 +113,34 @@ class QMarketSignalObject(PluginQObject):
         self._taker = None
         self._taker_since = 0.0
         self._retry_count = 0
+        # #95 embedded market runtime: on Android the kdf binary ships in the
+        # APK's nativeLibraryDir and is owned/started here; on desktop the
+        # runtime stays a phase-'unavailable' shell (daemon comes from the
+        # configured swap_endpoint). Phase changes surface via kdfStatusReady.
+        self._kdf_rt = kdf_runtime.KdfRuntime(
+            base_dir=self.plugin.config.electrum_path)
+        self._kdf_rt.set_notify(self.kdfStatusReady.emit)
+        if kdf_runtime.is_android():
+            self._kdf_rt.start()
+
+    @pyqtProperty(str, notify=kdfStatusReady)
+    def kdfPhase(self) -> str:
+        """lifecycle phase of the embedded kdf runtime (stopped/starting/
+        ready/error/stopping/unavailable)."""
+        return self._kdf_rt.phase
+
+    @pyqtProperty(str, notify=kdfStatusReady)
+    def kdfDetail(self) -> str:
+        """error detail when kdfPhase == 'error' (log tail, secrets scrubbed)."""
+        return self._kdf_rt.last_error or ''
+
+    @pyqtSlot()
+    def kdf_start(self):
+        self._kdf_rt.start()
+
+    @pyqtSlot()
+    def kdf_stop(self):
+        self._kdf_rt.stop()
 
     @pyqtProperty(str)
     def endpoint(self):

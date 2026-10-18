@@ -125,6 +125,20 @@ jobs:
           # downloads (p4a's downloader has no timeout of its own).
           key: android-buildozer-${{ env.APK_ARCH }}-v3
 
+      # task #95: the embedded market runtime (kdf) ships as a pinned prebuilt
+      # from the kdf fork's GitHub release (the static lib is a CI build
+      # product, not reproducible from this repo). Fetched here so it is
+      # inside PROJECT_ROOT when contrib/android/build.sh enters the docker
+      # build container. Integrity is enforced in contrib/android/
+      # make_kdf_aar.py (sha256 + ELF + aarch64) before the AAR is built.
+      - name: Fetch kdf runtime binary (task #95)
+        shell: bash
+        run: |
+          mkdir -p contrib/android/.cache/kdf
+          curl -fsSL --retry 3 -o contrib/android/.cache/kdf/libkdfbin.so \
+            "https://github.com/bartman081523/elektron-net-kdf/releases/download/phone-kdf-runtime-aarch64-84/kdf-shim-aarch64"
+          echo "3be96442ff41a93664f26197d589ca48ed1643831ecd5eddba98c78d692939d1  contrib/android/.cache/kdf/libkdfbin.so" | sha256sum -c -
+
       - name: Build APK (debug)
         # elektron fork: p4a's downloader has no timeout, so a stalled recipe
         # download wedges the whole job (observed: pycryptodomex, pyqt_builder).
