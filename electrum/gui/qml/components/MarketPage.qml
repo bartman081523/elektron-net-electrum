@@ -87,7 +87,10 @@ ElDialog {
             MarketPlugin.refresh_my_orders()
             MarketPlugin.refresh_enabled()
         } else {
-            statusLabel.text = qsTr('Kein kdf-Endpoint konfiguriert - Trades deaktiviert (Settings).')
+            // #96: no kdf reachable YET - the embedded runtime may still be
+            // starting (the phase chip shows the live phase; onKdfStatusReady
+            // re-refreshes everything once it turns ready)
+            statusLabel.text = qsTr('Kein kdf erreichbar - Phase: %1 (Trades warten auf die Runtime/Endpoint)').arg(MarketPlugin.kdfPhase)
         }
         root.enabledList = MarketPlugin.enabledCoins || []
         root.balances = MarketPlugin.balances || {}
@@ -97,8 +100,16 @@ ElDialog {
         target: MarketPlugin
         function onRatesReady() {
             var r = MarketPlugin.rates
-            if (r !== null) {
-                rateLabel.text = qsTr('1 ELEK ≈ %1 USD / %2 EUR (source: %3)').arg(r.usd).arg(r.eur).arg(r.source)
+            if (r === null || r === undefined) return
+            // #96 two snapshot shapes: the REST diagnostic snapshot carries
+            // usd/eur; the local-kdf book snapshot carries mid (the book mid
+            // IS the market rate). Neither present -> say so honestly.
+            if (r.usd !== undefined && r.usd !== null && r.eur !== undefined) {
+                rateLabel.text = qsTr('1 %1 ≈ %2 USD / %3 EUR (source: %4)').arg(root.pairBase).arg(r.usd).arg(r.eur).arg(r.source)
+            } else if (r.mid !== undefined && r.mid !== null) {
+                rateLabel.text = qsTr('Buch-Mid: %1 %2 je %3 (source: %4)').arg(r.mid).arg(root.pairRel).arg(root.pairBase).arg(r.source)
+            } else {
+                rateLabel.text = qsTr('Kein Kurs - Buch ohne Quote-Seite (source: %1)').arg(r.source || '-')
             }
         }
         function onEnabledReady() {
@@ -106,6 +117,24 @@ ElDialog {
         }
         function onBalancesReady() {
             root.balances = MarketPlugin.balances || {}
+        }
+        // #96: the embedded kdf runtime turns ready AFTER the first
+        // refreshAll (it boots in the background) - pull the market truth
+        // and the order-management views on that transition instead of
+        // leaving the surface disabled until a manual re-poll
+        function onKdfStatusReady() {
+            if (MarketPlugin == null || MarketPlugin == undefined) return
+            if (MarketPlugin.kdfPhase === 'ready') {
+                MarketPlugin.refresh_rates()
+                MarketPlugin.refresh_orderbook(root.pairBase, root.pairRel)
+                if (MarketPlugin.swapConfigured) {
+                    MarketPlugin.refresh_my_orders()
+                    MarketPlugin.refresh_enabled()
+                    MarketPlugin.refresh_balances()
+                    root.enabledList = MarketPlugin.enabledCoins || []
+                    root.balances = MarketPlugin.balances || {}
+                }
+            }
         }
         function onOrderbookReady() {
             var ob = MarketPlugin.orderbook

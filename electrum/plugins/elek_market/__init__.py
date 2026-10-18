@@ -27,6 +27,12 @@ SimpleConfig.ELEK_MARKET_BASE = ConfigVar(
 SimpleConfig.ELEK_MARKET_REL = ConfigVar(
     key="plugins.%s.rel" % plugin_name,
     default="tBTC", type_=str, plugin=plugin_name)
+# #96: the Render REST layer (/fx/rates.json + /rpc orderbook) is a
+# DIAGNOSTIC fallback only - the market truth is the kdf orderbook read from
+# the user's own kdf (KdfClient.orderbook). Default "" (falsy = off).
+SimpleConfig.ELEK_MARKET_DIAGNOSTIC_REST = ConfigVar(
+    key="plugins.%s.diagnostic_rest" % plugin_name,
+    default="", type_=str, plugin=plugin_name)
 
 
 class Plugin(BasePlugin):
@@ -50,6 +56,14 @@ class Plugin(BasePlugin):
         if self._api is None:
             self._api = MarketApi(self.endpoint or "http://127.0.0.1:10100")
         return self._api
+
+    @property
+    def diagnostic_rest(self) -> bool:
+        """#96: opt-in flag for the Render REST fallback (raw string config
+        parsed as truthy - never bool() the raw value, 'false' is truthy).
+        Only this property may gate MarketApi usage in the QML bridge."""
+        raw = self.config.ELEK_MARKET_DIAGNOSTIC_REST or ""
+        return raw.strip().lower() in ("1", "true", "yes", "on")
 
     @property
     def pair(self) -> tuple:

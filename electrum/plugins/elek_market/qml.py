@@ -18,7 +18,7 @@ from . import Plugin as ElekMarketBase
 from . import kdf_runtime
 from .market_api import (KdfClient, TESTNET_COINS, MarketApi,
                          MarketApiError, dec_div, dec_mul,
-                         sepolia_enable_params)
+                         rates_from_book, sepolia_enable_params)
 
 
 def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
@@ -152,8 +152,30 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot()
     def refresh_rates(self):
+        """#96 truth source: the user's own kdf book mid (rates_from_book,
+        snapshot source 'local-kdf'). The Render REST /fx/rates.json only
+        answers when the diagnostic flag is set; without either source the
+        error signal explains why no rate exists."""
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
+        kdf_err = None
+        kdf = self._resolved_kdf()
+        if kdf is not None:
+            fut = _asyncio.run_coroutine_threadsafe(
+                kdf.orderbook(*self.plugin.pair), get_asyncio_loop())
+            try:
+                self._rates = rates_from_book(
+                    MarketApi.parse_orderbook(fut.result(timeout=30)))
+                self.ratesReady.emit()
+                return
+            except Exception as e:
+                kdf_err = str(e)
+        if not self.plugin.diagnostic_rest:
+            self.error.emit(kdf_err or
+                            'no kdf available (embedded runtime phase: %s) '
+                            '- REST diagnostic disabled'
+                            % self._kdf_rt.phase)
+            return
         api = self.plugin.get_api()
         fut = _asyncio.run_coroutine_threadsafe(api.get_rates_raw(), get_asyncio_loop())
         try:
@@ -170,6 +192,23 @@ class QMarketSignalObject(PluginQObject):
     def refresh_orderbook(self, base: str, rel: str):
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
+        kdf_err = None
+        kdf = self._resolved_kdf()
+        if kdf is not None:
+            fut = _asyncio.run_coroutine_threadsafe(
+                kdf.orderbook(base, rel), get_asyncio_loop())
+            try:
+                self._book = MarketApi.parse_orderbook(fut.result(timeout=30))
+                self.orderbookReady.emit()
+                return
+            except Exception as e:
+                kdf_err = str(e)
+        if not self.plugin.diagnostic_rest:
+            self.error.emit(kdf_err or
+                            'no kdf available (embedded runtime phase: %s) '
+                            '- REST diagnostic disabled'
+                            % self._kdf_rt.phase)
+            return
         api = self.plugin.get_api()
         fut = _asyncio.run_coroutine_threadsafe(api.get_orderbook(base, rel), get_asyncio_loop())
         try:
@@ -193,49 +232,53 @@ class QMarketSignalObject(PluginQObject):
             k.userpass = swap_userpass or ""
         return k
 
+    def _resolved_kdf(self) -> KdfClient | None:
+        """#96 truth source: the user's OWN kdf. Priority: the configured
+        external swap_endpoint, else the embedded runtime (Android, phase
+        'ready' - it owns the conf the rpc_password comes from). None when
+        neither is up: then there is NO market truth (the Render REST layer
+        is a diagnostic-only fallback, never the primary path)."""
+        cfg = self.plugin.config
+        swap_endpoint = cfg.get('plugins.elek_market.swap_endpoint')
+        if swap_endpoint:
+            return self._get_kdf(swap_endpoint,
+                                 cfg.get('plugins.elek_market.swap_userpass'))
+        rt = self._kdf_rt
+        if rt.phase == kdf_runtime.PHASE_READY:
+            return self._get_kdf(rt.rpc_endpoint, rt.rpc_userpass())
+        return None
+
     def _get_kdf_cfg(self) -> KdfClient:
+        """Resolved kdf for the order-management call sites; falls back to
+        the plain config pair (possibly empty) so legacy error surfaces
+        keep working when no kdf is reachable."""
+        kdf = self._resolved_kdf()
+        if kdf is not None:
+            return kdf
         cfg = self.plugin.config
         return self._get_kdf(cfg.get('plugins.elek_market.swap_endpoint'),
                              cfg.get('plugins.elek_market.swap_userpass'))
 
     def _post_buy_legacy(self, base: str, rel: str, volume: str, price: str):
-        """Dispatch a kdf-native legacy `buy` to the user's own client-kdf
-        (config: plugins.elek_market.swap_endpoint / swap_userpass) - the
-        market itself stays 0-balance (M2 no-custody). Fallback: legacy
-        market /rpc proxy. Returns the raw response dict."""
-        import json as _json
-        import aiohttp
+        """Dispatch a kdf-native legacy `buy` to the user's OWN kdf (#96):
+        the embedded runtime (Android) or the configured swap_endpoint.
+        The market REST proxy is NOT a buy path (no-custody: only the
+        wallet's own kdf may move coins - the daemons stay 0-balance, M2).
+        Returns the raw response dict; without a resolved kdf it answers a
+        {'error': ...} dict instead of raising (the QML slots do not wrap
+        placement in try/except - _finish_buy surfaces the error)."""
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
-
-        loop = get_asyncio_loop()
-        cfg = self.plugin.config
-        swap_endpoint = cfg.get('plugins.elek_market.swap_endpoint')
-        swap_userpass = cfg.get('plugins.elek_market.swap_userpass')
-        if swap_endpoint:
-            kdf = self._get_kdf(swap_endpoint, swap_userpass)
-            fut = _asyncio.run_coroutine_threadsafe(
-                kdf.buy_legacy(base, rel, price, volume), loop)
+        kdf = self._resolved_kdf()
+        if kdf is None:
+            return {"error": "no kdf available - configure swap_endpoint "
+                             "or wait for the embedded kdf runtime"}
+        fut = _asyncio.run_coroutine_threadsafe(
+            kdf.buy_legacy(base, rel, price, volume), get_asyncio_loop())
+        try:
             return fut.result(timeout=200)
-        payload = {"method": "buy", "base": base, "rel": rel,
-                   "price": price, "volume": volume}
-        url = self.plugin.endpoint.rstrip("/") + "/rpc"
-        timeout = aiohttp.ClientTimeout(total=180)
-
-        from electrum.plugins.elek_market.market_api import _verified_ssl
-
-        async def _do():
-            async with aiohttp.ClientSession(
-                    timeout=timeout,
-                    connector=aiohttp.TCPConnector(ssl=_verified_ssl())) as s:
-                async with s.post(url, json=payload) as reply:
-                    body = await reply.text()
-                    if reply.status != 200:
-                        raise MarketApiError(reply.status, body)
-                    return _json.loads(body)
-
-        fut = _asyncio.run_coroutine_threadsafe(_do(), loop)
-        return fut.result(timeout=200)
+        except Exception as e:
+            return {"error": str(e)[:200]}
 
     def _finish_buy(self, res):
         self._last_buy = res
@@ -289,12 +332,14 @@ class QMarketSignalObject(PluginQObject):
             return
         if _time.time() - self._taker_since < TAKER_RETRY_SETTLE_SECS:
             return
-        api = self.plugin.get_api()
+        kdf = self._resolved_kdf()
+        if kdf is None:
+            return  # #96: no market truth without the user's own kdf
         base, rel, volume, price = taker["args"]
         fut = _asyncio.run_coroutine_threadsafe(
-            api.get_orderbook(base, rel), get_asyncio_loop())
+            kdf.orderbook(base, rel), get_asyncio_loop())
         try:
-            book = api.parse_orderbook(fut.result(timeout=30))
+            book = MarketApi.parse_orderbook(fut.result(timeout=30))
             if not retry_crossing(book, taker["kind"], float(price)):
                 return
         except Exception:
@@ -430,7 +475,16 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtProperty(bool)
     def swapConfigured(self):
-        return bool(self.plugin.config.get('plugins.elek_market.swap_endpoint'))
+        """#96: trades are live whenever A kdf is reachable - the embedded
+        runtime (Android, phase ready) or the configured swap_endpoint,
+        independent of the REST diagnostic flag."""
+        return self._resolved_kdf() is not None
+
+    @pyqtProperty(bool)
+    def diagnosticRest(self):
+        """#96: whether the Render REST layer may act as read-only
+        fallback (opt-in; default OFF - kdf is the only truth)."""
+        return self.plugin.diagnostic_rest
 
     @pyqtProperty('QVariant')
     def lastBuy(self):
@@ -457,9 +511,11 @@ class QMarketSignalObject(PluginQObject):
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
 
-        cfg = self.plugin.config
-        kdf = self._get_kdf(cfg.get('plugins.elek_market.swap_endpoint'),
-                            cfg.get('plugins.elek_market.swap_userpass'))
+        kdf = self._resolved_kdf()
+        if kdf is None:
+            self.error.emit('no kdf available - cannot poll swap %s'
+                            % self._swap_uuid)
+            return
         fut = _asyncio.run_coroutine_threadsafe(
             kdf.my_swap_status(self._swap_uuid), get_asyncio_loop())
         try:
