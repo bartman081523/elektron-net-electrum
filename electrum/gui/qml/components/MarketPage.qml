@@ -352,6 +352,48 @@ ElDialog {
                     }
                 }
 
+                // #93: lightning activation state of the platform coins -
+                // one glance, honest about the mechanism (swaps need open
+                // channels; without them the legs run on-chain HTLC)
+                function lnBadgeText(coins, st) {
+                    var lines = []
+                    for (var i = 0; i < coins.length; ++i) {
+                        var c = coins[i]
+                        var s = st[c]
+                        var label = c + ': ' + qsTr('aktiv')
+                        if (s === undefined || s === '')
+                            label = c + ': ' + qsTr('bereit (Auto)')
+                        else if (s === 'activating')
+                            label = c + ': ' + qsTr('aktiviere...')
+                        else if (s !== 'ok')
+                            label = c + ': ' + s
+                        lines.push(label)
+                    }
+                    return lines.join('  |  ')
+                }
+                Label {
+                    id: lnBadge
+                    Layout.fillWidth: true
+                    font.pixelSize: 11
+                    color: constants.mutedForeground
+                    visible: MarketPlugin !== null && MarketPlugin !== undefined
+                    text: (MarketPlugin !== null && MarketPlugin !== undefined)
+                          ? qsTr('Lightning: %1').arg(
+                                lnBadgeText(MarketPlugin.lnCoins,
+                                            MarketPlugin.lnState))
+                          : ''
+                }
+                Label {
+                    Layout.fillWidth: true
+                    font.pixelSize: 10
+                    visible: lnBadge.visible
+                    wrapMode: Text.WrapAnywhere
+                    color: constants.mutedForeground
+                    text: lnBadge.visible
+                          ? qsTr('LN-Swaps brauchen offene Kanaele; ohne laufen die Beine on-chain (HTLC).')
+                          : ''
+                }
+
                 Heading { text: qsTr('Orderbuch') }
                 Label {
                     id: statusLabel
