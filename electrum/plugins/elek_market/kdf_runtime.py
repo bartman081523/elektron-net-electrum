@@ -19,6 +19,7 @@
 # Desktop (non-Android) is inert: start() moves the phase to 'unavailable'
 # and never touches a process - the desktop plugin keeps using the external
 # swap_endpoint config (see market_api.KdfClient).
+import hashlib
 import json
 import os
 import secrets
@@ -50,6 +51,36 @@ TEMPLATE_SERVERS = {
     "tBTC": ["127.0.0.1:50005"],
     "SEPOLIAETH": None,
 }
+
+# #98: domain-separated derivation of the kdf trading identity from the
+# app wallet seed (custody link: one wallet, one trading principal). The
+# raw seed never enters the conf/logs - only this tagged digest does; a
+# fresh install of the same wallet restores the same kdf identity and
+# its swap history. kdf treats the passphrase string as raw seed material
+# (task-#84 device passphrase was also a non-mnemonic string), so this
+# hex form is a valid, wallet-unique seed.
+KDF_PASSPHRASE_TAG = "elektron-net/kdf-passphrase/v1"
+KDF_PASSPHRASE_PREFIX = "elkkdf1"
+
+
+def derive_kdf_passphrase(seed_text) -> str:
+    """Deterministic kdf passphrase from the wallet seed; '' when empty."""
+    text = (seed_text or "").strip()
+    if not text:
+        return ""
+    digest = hashlib.sha256(
+        (KDF_PASSPHRASE_TAG + "/" + text).encode("utf-8")).hexdigest()
+    return KDF_PASSPHRASE_PREFIX + digest
+
+
+def _apply_custody_passphrase(conf: dict, passphrase: str) -> dict:
+    """#98: a wallet-derived passphrase is authoritative (identity follows
+    the App-Wallet); '' keeps whatever is persisted (fresh confs keep the
+    random one). Callers persist the conf right after."""
+    if passphrase:
+        conf["passphrase"] = passphrase
+    return conf
+
 
 PHASE_UNAVAILABLE = "unavailable"
 PHASE_STOPPED = "stopped"
@@ -212,13 +243,19 @@ class KdfRuntime:
     """Lifecycle owner of the embedded kdf market runtime (Android only)."""
 
     def __init__(self, base_dir: str, seednode: str = "",
-                 server_overrides: dict | None = None):
+                 server_overrides: dict | None = None,
+                 passphrase_provider=None):
         """#97: seednode (comma-separated list allowed, '' = template
         default) and per-coin server overrides (parsed dict) arrive from
         the plugin settings; they are resolved into the boot conf on every
-        start (see _run / _sync_settings), never mid-flight."""
+        start (see _run / _sync_settings), never mid-flight.
+        #98: passphrase_provider is an optional zero-arg callable evaluated
+        in the runtime thread on every start - it returns the wallet-derived
+        kdf passphrase ('' = keep the persisted one). The provider is
+        deferred because the wallet is often loaded after this ctor."""
         self.seednode = (seednode or "").strip()
         self.server_overrides = dict(server_overrides or {})
+        self.passphrase_provider = passphrase_provider
         self.dir = os.path.join(base_dir, "kdf")
         self.conf_path = os.path.join(self.dir, "MM2.json")
         self.log_path = os.path.join(self.dir, "kdf.log")
@@ -384,6 +421,18 @@ class KdfRuntime:
         try:
             self._kill_stale()
             conf = self._ensure_conf()
+            # #98 custody link: the wallet-seed-derived passphrase wins
+            # over the persisted one whenever the provider has one
+            # (identity follows the App-Wallet); the writeback below
+            # persists the switch.
+            custody = ""
+            provider = self.passphrase_provider
+            if provider is not None:
+                try:
+                    custody = provider()
+                except Exception:
+                    custody = ""
+            conf = _apply_custody_passphrase(conf, custody)
             # #97: resolve the current settings into the conf and write it
             # back (identity/secrets untouched) so the spawned process and
             # the on-disk conf agree.

@@ -96,6 +96,9 @@ class QMarketSignalObject(PluginQObject):
 
     def __init__(self, plugin, parent):
         super().__init__(plugin, parent)
+        # #98: the ElectrumQmlApplication - the only window onto the open
+        # wallet (Daemon.currentWallet), used by the custody passphrase.
+        self._app = parent
         self._rates = None
         self._book = None
         self._last_buy = None
@@ -122,7 +125,10 @@ class QMarketSignalObject(PluginQObject):
             # #97: plugin network settings reach the runtime at construction
             # only; they are resolved into the boot conf on every start.
             seednode=self.plugin.net_seednode,
-            server_overrides=self.plugin.coin_server_overrides())
+            server_overrides=self.plugin.coin_server_overrides(),
+            # #98: wallet-seed-derived kdf identity, evaluated in the
+            # runtime thread on every start (the wallet loads later).
+            passphrase_provider=self._custody_passphrase)
         self._kdf_rt.set_notify(self.kdfStatusReady.emit)
         if kdf_runtime.is_android():
             self._kdf_rt.start()
@@ -145,6 +151,29 @@ class QMarketSignalObject(PluginQObject):
     @pyqtSlot()
     def kdf_stop(self):
         self._kdf_rt.stop()
+
+    def _wallet_seed(self) -> str:
+        """#98: seed of the open wallet ('' when none is open or it is
+        password-protected - we must not (and cannot) ask here). The seed
+        is used in-process only for hashing; it never enters conf/logs."""
+        app = self._app
+        daemon = getattr(app, "daemon", None)
+        qe_wallet = getattr(daemon, "currentWallet", None)
+        wallet = getattr(qe_wallet, "wallet", None)
+        if wallet is None:
+            return ""
+        for password in (None, ""):
+            try:
+                return (wallet.get_seed(password) or "").strip()
+            except Exception:
+                continue
+        return ""
+
+    def _custody_passphrase(self) -> str:
+        """#98 custody link - deterministic kdf identity from the App-Wallet
+        seed (derive_kdf_passphrase tags the digest; the raw seed stays in
+        the plugin process). '' = keep the persisted random passphrase."""
+        return kdf_runtime.derive_kdf_passphrase(self._wallet_seed())
 
     @pyqtProperty(str)
     def endpoint(self):
