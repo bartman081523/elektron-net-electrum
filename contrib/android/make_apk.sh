@@ -107,21 +107,25 @@ if [[ "$2" == "all" ]] ; then
     export APP_ANDROID_ARCHS=armeabi-v7a
     export APP_ANDROID_NUMERIC_VERSION=$("$CONTRIB_ANDROID"/get_apk_versioncode.py "$APP_ANDROID_ARCHS")
     "$CONTRIB_ANDROID"/make_barcode_scanner.sh "$APP_ANDROID_ARCHS" || fail "make_barcode_scanner.sh failed"
+    "$CONTRIB_ANDROID"/make_kdf_runtime.sh "$APP_ANDROID_ARCHS" || fail "make_kdf_runtime.sh failed"
     make $TARGET
 
     export APP_ANDROID_ARCHS=arm64-v8a
     export APP_ANDROID_NUMERIC_VERSION=$("$CONTRIB_ANDROID"/get_apk_versioncode.py "$APP_ANDROID_ARCHS")
     "$CONTRIB_ANDROID"/make_barcode_scanner.sh "$APP_ANDROID_ARCHS" || fail "make_barcode_scanner.sh failed"
+    "$CONTRIB_ANDROID"/make_kdf_runtime.sh "$APP_ANDROID_ARCHS" || fail "make_kdf_runtime.sh failed"
     make $TARGET
 
     export APP_ANDROID_ARCHS=x86_64
     export APP_ANDROID_NUMERIC_VERSION=$("$CONTRIB_ANDROID"/get_apk_versioncode.py "$APP_ANDROID_ARCHS")
     "$CONTRIB_ANDROID"/make_barcode_scanner.sh "$APP_ANDROID_ARCHS" || fail "make_barcode_scanner.sh failed"
+    "$CONTRIB_ANDROID"/make_kdf_runtime.sh "$APP_ANDROID_ARCHS" || fail "make_kdf_runtime.sh failed"
     make $TARGET
 else
     export APP_ANDROID_ARCHS=$2
     export APP_ANDROID_NUMERIC_VERSION=$("$CONTRIB_ANDROID"/get_apk_versioncode.py "$APP_ANDROID_ARCHS")
     "$CONTRIB_ANDROID"/make_barcode_scanner.sh "$APP_ANDROID_ARCHS" || fail "make_barcode_scanner.sh failed"
+    "$CONTRIB_ANDROID"/make_kdf_runtime.sh "$APP_ANDROID_ARCHS" || fail "make_kdf_runtime.sh failed"
     make $TARGET
 fi
 

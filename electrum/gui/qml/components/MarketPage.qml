@@ -243,6 +243,27 @@ ElDialog {
                     Layout.fillWidth: true
                     text: qsTr('loading…')
                 }
+                // #95: embedded market runtime (kdf) lifecycle chip - on
+                // Android the daemon runs in-APP, phase updates arrive via
+                // the kdfStatusReady notify signal on MarketPlugin.kdfPhase
+                Label {
+                    Layout.fillWidth: true
+                    font.pixelSize: 11
+                    color: constants.mutedForeground
+                    text: (MarketPlugin !== null && MarketPlugin !== undefined)
+                          ? qsTr('kdf runtime: %1').arg(MarketPlugin.kdfPhase) : ''
+                }
+                Label {
+                    Layout.fillWidth: true
+                    font.pixelSize: 10
+                    visible: (MarketPlugin !== null && MarketPlugin !== undefined)
+                             && MarketPlugin.kdfPhase === 'error'
+                             && MarketPlugin.kdfDetail !== ''
+                    wrapMode: Text.WrapAnywhere
+                    color: '#b34700'
+                    text: MarketPlugin !== null && MarketPlugin !== undefined
+                          ? MarketPlugin.kdfDetail : ''
+                }
 
                 Heading { text: qsTr('Guthaben') }
                 RowLayout {
