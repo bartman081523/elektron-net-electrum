@@ -379,9 +379,14 @@ ElDialog {
                     visible: MarketPlugin !== null && MarketPlugin !== undefined
                     text: (MarketPlugin !== null && MarketPlugin !== undefined)
                           ? qsTr('Lightning: %1').arg(
-                                lnBadgeText(MarketPlugin.lnCoins,
-                                            MarketPlugin.lnState))
+                                pageColumn.lnBadgeText(MarketPlugin.lnCoins,
+                                                       MarketPlugin.lnState))
                           : ''
+                    // #93a regression note: the helper lives on pageColumn;
+                    // QML resolves unqualified names only up to the document
+                    // root (ElDialog root), not through intermediate ids -
+                    // the bare lnBadgeText(...) call was a ReferenceError on
+                    // device (logcat MarketPage.qml:380, x3).
                 }
                 Label {
                     Layout.fillWidth: true
