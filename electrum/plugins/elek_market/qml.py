@@ -142,7 +142,25 @@ class QMarketSignalObject(PluginQObject):
             passphrase_provider=self._custody_passphrase)
         self._kdf_rt.set_notify(self.kdfStatusReady.emit)
         if kdf_runtime.is_android():
-            self._kdf_rt.start()
+            # #98: the start is deferred to the first wallet load. At
+            # construction time no wallet is open (the QML stack loads it
+            # seconds later), so an eager start would evaluate the custody
+            # provider as '' (keep-persisted) on every boot and the
+            # wallet-derived identity would never engage - observed on
+            # device as the pre-#98 kdf84-era identity surviving the #98
+            # code. The walletLoaded signal (QEDaemon) is the earliest
+            # honest point where the seed can be read.
+            daemon = getattr(self._app, "daemon", None)
+            if daemon is not None:
+                if self._wallet_seed():
+                    # race: a wallet is already open before the plugin
+                    # initialises - start right away
+                    self._kdf_rt.start()
+                else:
+                    daemon.walletLoaded.connect(self._on_wallet_loaded)
+            # without a daemon handle the runtime stays stopped; the
+            # explicit kdf_start slot (and the honest 'stopped' phase on
+            # the market page) remain the fallback.
 
     @pyqtProperty(str, notify=kdfStatusReady)
     def kdfPhase(self) -> str:
@@ -185,6 +203,16 @@ class QMarketSignalObject(PluginQObject):
         seed (derive_kdf_passphrase tags the digest; the raw seed stays in
         the plugin process). '' = keep the persisted random passphrase."""
         return kdf_runtime.derive_kdf_passphrase(self._wallet_seed())
+
+    def _on_wallet_loaded(self, *_):
+        # #98 timing fix: fires on wallet open AND on close/delete (None,
+        # None). Only a real, readable seed justifies the start; the
+        # runtime's own start() is idempotent against re-emits. Later
+        # wallet loads with a DIFFERENT seed don't restart the running
+        # runtime (the first open wallet owns the session identity; an
+        # identity switch mid-session is future work).
+        if self._wallet_seed():
+            self._kdf_rt.start()
 
     @pyqtProperty(str)
     def endpoint(self):
