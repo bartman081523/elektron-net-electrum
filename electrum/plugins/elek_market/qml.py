@@ -18,7 +18,8 @@ from . import Plugin as ElekMarketBase
 from . import kdf_runtime
 from .market_api import (KdfClient, TESTNET_COINS, MarketApi,
                          MarketApiError, dec_div, dec_mul,
-                         rates_from_book, sepolia_enable_params)
+                         lightning_ticker, rates_from_book, LN_SUPPORTED,
+                         sepolia_enable_params)
 
 
 def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
@@ -90,6 +91,7 @@ class QMarketSignalObject(PluginQObject):
     enabledReady = pyqtSignal()    # #91: enabled-set refreshed
     balancesReady = pyqtSignal()   # #91: balance snapshot refreshed
     kdfStatusReady = pyqtSignal()  # #95: embedded kdf runtime phase changed
+    lnStateReady = pyqtSignal()    # #93: lightning activation state changed
     error = pyqtSignal(str)
 
     _name = _('Elektron Market')
@@ -112,6 +114,11 @@ class QMarketSignalObject(PluginQObject):
         # their last known balances (coin -> parse_balance dict)
         self._enabled = []
         self._balances = {}
+        # #93 lightning: per platform coin activation state ('activating' |
+        # 'ok' | 'error: ...'; missing/'' = not yet attempted this session)
+        # + the once-per-session attempt ledger for the self-heal path.
+        self._ln_state = {}
+        self._ln_tried = set()
         # #89 taker-retry state: the placed order's view terms + retry bookkeeping
         self._taker = None
         self._taker_since = 0.0
@@ -589,6 +596,20 @@ class QMarketSignalObject(PluginQObject):
     def balances(self):
         return self._balances
 
+    # ---- #93 lightning counterparts (tELEK/tBTC; SEPOLIAETH is EVM) ----
+
+    @pyqtProperty('QVariantList')
+    def lnCoins(self):
+        """The platform coins that get a Lightning counterpart."""
+        return list(LN_SUPPORTED)
+
+    @pyqtProperty('QVariant', notify=lnStateReady)
+    def lnState(self):
+        """Per platform coin: 'activating' | 'ok' | 'error: ...' ('' or
+        missing = not attempted this session); changes arrive via
+        lnStateReady."""
+        return self._ln_state
+
     @pyqtSlot()
     def refresh_enabled(self):
         """Refresh the coin set enabled on the client-kdf. Without a
@@ -608,6 +629,19 @@ class QMarketSignalObject(PluginQObject):
             self.refresh_balances()
         except Exception as e:
             self.error.emit(str(e))
+        # #93 self-heal: platform coins whose Lightning counterpart is not
+        # enabled yet are activated in the background (once per session per
+        # coin). Only the embedded runtime qualifies - it owns the boot conf
+        # and injects the -lightning entries (_ensure_lightning_coins); an
+        # external swap_endpoint kdf must carry its own conf entries.
+        if self._kdf_rt.phase == kdf_runtime.PHASE_READY:
+            for ln_coin in LN_SUPPORTED:
+                if (ln_coin not in self._enabled
+                        or lightning_ticker(ln_coin) in self._enabled
+                        or ln_coin in self._ln_tried):
+                    continue
+                self._ln_tried.add(ln_coin)
+                self.enable_lightning(ln_coin)
 
     @pyqtSlot(str)
     def enable_coin(self, coin: str):
@@ -634,8 +668,54 @@ class QMarketSignalObject(PluginQObject):
                 self._enabled = sorted(self._enabled + [coin])
                 self.enabledReady.emit()
             self.refresh_balances()
+            # #93: the Lightning counterpart follows its platform coin
+            self._maybe_activate_lightning(coin)
         except Exception as e:
             self.error.emit(str(e))
+
+    # ---- #93 lightning activation (task::enable_lightning on kdf) ----
+
+    def _maybe_activate_lightning(self, coin: str):
+        """Post-enable follow-up: fire the LN activation for a supported
+        platform coin once per session (None/'' = not attempted yet;
+        'error: ...' is retried when the user re-enables the coin)."""
+        if coin not in LN_SUPPORTED:
+            return
+        state = self._ln_state.get(coin)
+        if state is None or state == '' or state.startswith('error:'):
+            self._ln_tried.add(coin)
+            self.enable_lightning(coin)
+
+    @pyqtSlot(str)
+    def enable_lightning(self, coin: str):
+        """Activate the coin's Lightning counterpart (task::enable_lightning
+        on the user's kdf). Fire-and-forget on the shared asyncio loop - the
+        caller may poll that task for up to 600 s, far too long to block the
+        Qt event loop; the outcome lands in lnState ('ok' / 'error: ...')
+        and is announced via lnStateReady."""
+        if not self.swapConfigured:
+            self.error.emit('swap_endpoint not configured')
+            return
+        if self._ln_state.get(coin) == 'activating':
+            return  # a task is already running for this coin
+        import asyncio as _asyncio
+        from electrum.util import get_asyncio_loop
+        self._ln_state = dict(self._ln_state, **{coin: 'activating'})
+        self.lnStateReady.emit()
+        _asyncio.run_coroutine_threadsafe(
+            self._activate_lightning(coin), get_asyncio_loop())
+
+    async def _activate_lightning(self, coin: str):
+        try:
+            res = await self._get_kdf_cfg().enable_lightning(
+                coin, coin + '-node')
+            state = 'ok' if res.get('status') == 'Ok' else \
+                'error: %s' % str(res.get('details') or
+                                  res.get('status'))[:100]
+        except Exception as e:
+            state = 'error: %s' % str(e)[:100]
+        self._ln_state = dict(self._ln_state, **{coin: state})
+        self.lnStateReady.emit()
 
     @pyqtSlot()
     def refresh_balances(self):

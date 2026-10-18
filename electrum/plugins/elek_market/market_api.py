@@ -9,6 +9,7 @@
 #   * the market layer stays read-only; money-moving calls (buy/setprice,
 #     enable/my_balance) target the user's OWN client-kdf (KdfClient only).
 #
+import asyncio
 import json
 from decimal import Decimal, localcontext
 
@@ -62,6 +63,53 @@ def sepolia_enable_params() -> dict:
 # Coins tradeable in the app's TESTNET market (the #91 mandate: btc, eth,
 # elek). Mainnet pairs land with the #73 branch split.
 TESTNET_COINS = ("tELEK", "tBTC", "SEPOLIAETH")
+
+# #93 Lightning: the -lightning coin entries never live in the coin
+# registries (coins/upstream_coins + coins/elektron_coins carry none) -
+# callers always construct them, mirroring the kdf test fixture
+# (mm2_main/tests/mm2_tests/lightning_tests.rs tBTC-TEST-lightning).
+# Legacy `enable` rejects Lightning tickers outright (lp_coins.rs), so
+# activation goes through the task::enable_lightning API (below).
+LN_TICKER_SUFFIX = "-lightning"
+LN_DECIMALS = 11  # msat precision, mirrors the fixture
+# The fixture's targets (12/6/1) track BTC-mainnet minutes; the fork
+# testnet settles much faster (avg_blocktime 1), so rebalance to 6/2/1.
+LN_CONFIRMATION_TARGETS = {"background": 6, "normal": 2, "high_priority": 1}
+# UTXO segwit platforms with a Lightning counterpart in this app.
+# SEPOLIAETH is EVM - there is no L2 for it, its legs stay on-chain HTLC.
+LN_SUPPORTED = ("tELEK", "tBTC")
+
+
+def lightning_ticker(coin: str) -> str:
+    """Ticker of a coin's Lightning counterpart (tELEK -> tELEK-lightning)."""
+    return coin + LN_TICKER_SUFFIX
+
+
+def lightning_coin_conf(coin: str, network: str = "testnet") -> dict:
+    """One canonical -lightning coin entry (fixture form above). The
+    platform coin must already carry the LN prerequisites: segwit
+    address_format + avg_blocktime (both sit in the app template)."""
+    return {
+        "coin": lightning_ticker(coin),
+        "mm2": 1,
+        "decimals": LN_DECIMALS,
+        "our_channels_configs": {
+            "inbound_channels_confirmations": 1,
+            "max_inbound_in_flight_htlc_percent": 90,
+            "their_channel_reserve_sats": 1000,
+        },
+        "counterparty_channel_config_limits": {
+            "outbound_channels_confirmations": 1,
+        },
+        "protocol": {
+            "type": "LIGHTNING",
+            "protocol_data": {
+                "platform": coin,
+                "network": network,
+                "confirmation_targets": dict(LN_CONFIRMATION_TARGETS),
+            },
+        },
+    }
 
 
 def dec_str(x) -> str:
@@ -463,3 +511,90 @@ class KdfClient:
             "unspendable": str(node.get("unspendable_balance", "0") or "0"),
             "error": str(node.get("error") or node.get("HTTPError") or ""),
         }
+
+    # ---- #93 Lightning activation --------------------------------------
+    # -lightning entries are never registry-served (none exist upstream):
+    # they are constructed (lightning_coin_conf) and injected into the
+    # daemon conf (kdf_runtime._ensure_lightning_coins) before the kernel
+    # starts. Legacy `enable` rejects Lightning tickers (lp_coins.rs) -
+    # the only activation path is the task API below.
+
+    async def enable_lightning(self, coin: str, name: str,
+                               timeout: float = 600.0) -> dict:
+        """Activate the coin's Lightning counterpart via the task API.
+        Wire mirrors the kdf test helper init_lightning (for_tests.rs):
+        task::enable_lightning::init answers {"result": {"task_id": ...}},
+        then task::enable_lightning::status is polled in 1 s steps until
+        Ok/Error (bounded by `timeout` - channel-free activation still
+        walks wallet init and can take minutes; a timeout leaves the
+        last status in place, 'unknown' if no terminal poll ever
+        landed). Returns {"task_id", "status", "details", "address"};
+        failures surface as status == 'Error', not exceptions, so the
+        caller can render them. Raises only on an init that never
+        produced a task_id."""
+        init = await self._post({
+            "userpass": self.userpass, "mmrpc": "2.0",
+            "method": "task::enable_lightning::init",
+            "params": {"ticker": lightning_ticker(coin),
+                       "activation_params": {"name": name}}})
+        task_id = self.parse_lightning_init(init)
+        status = {"status": "unknown", "details": "", "address": ""}
+        waited = 0.0
+        while status["status"] not in ("Ok", "Error") and waited < timeout:
+            await asyncio.sleep(1.0)
+            waited += 1.0
+            status = self.parse_lightning_status(await self._post({
+                "userpass": self.userpass, "mmrpc": "2.0",
+                "method": "task::enable_lightning::status",
+                "params": {"task_id": task_id}}),
+                ticker=lightning_ticker(coin))
+        return {"task_id": task_id, "status": status["status"],
+                "details": status["details"], "address": status["address"]}
+
+    @staticmethod
+    def parse_lightning_init(raw: dict) -> int:
+        """task::enable_lightning::init result -> task_id. Anything
+        unexpected raises MarketApiError(-5) with the body preview."""
+        result = raw.get("result") if isinstance(raw, dict) else None
+        if isinstance(result, dict) and result.get("task_id") is not None:
+            return int(result["task_id"])
+        raise MarketApiError(-5, "enable_lightning init: %s" %
+                             json.dumps(raw or {})[:200])
+
+    @staticmethod
+    def parse_lightning_status(raw, ticker: str = "") -> dict:
+        """One task::status poll -> {"status", "details", "address"}.
+        Shapes (defensive - the poller keeps waiting on anything not
+        Ok/Error, so 'unknown' stays 'unknown'). A legacy {"error": ...}
+        body is 'Error' at once. Ok carries the activation payload - the
+        Lightning 'address' is the node's compressed pubkey, read from
+        result.data[ticker].address with the flat .address fallbacks.
+        InProgress carries a progress string; 'Error' the failure.
+        Never raises."""
+        node = raw if isinstance(raw, dict) else {}
+        result = node.get("result")
+        if not isinstance(result, dict):
+            if "error" in node:
+                return {"status": "Error", "details": str(node["error"])[:200],
+                        "address": ""}
+            return {"status": "unknown",
+                    "details": json.dumps(raw)[:200] if raw is not None else "",
+                    "address": ""}
+        state = str(result.get("status") or "").lower()
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        if state == "ok":
+            sub = data.get(ticker) if isinstance(data.get(ticker), dict) \
+                else data
+            address = (sub.get("address") if isinstance(sub, dict) else "") \
+                or data.get("address") or result.get("address") or ""
+            return {"status": "Ok", "details": "", "address": str(address)}
+        if state == "error":
+            details = str(node.get("error") or data.get("error")
+                          or result.get("error") or result.get("details")
+                          or "lightning activation failed")
+            return {"status": "Error", "details": details[:200], "address": ""}
+        if state == "inprogress":
+            return {"status": "InProgress",
+                    "details": str(result.get("details") or ""), "address": ""}
+        return {"status": "unknown", "details": json.dumps(result)[:200],
+                "address": ""}

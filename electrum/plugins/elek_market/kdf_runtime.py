@@ -108,6 +108,81 @@ def binary_path() -> str | None:
     return os.path.join(info.nativeLibraryDir, BINARY_NAME)
 
 
+# #93 Lightning: the -lightning coin entries never live in the registries
+# (coins/upstream_coins + coins/elektron_coins carry none) - they are
+# always constructed, mirroring the kdf fixture (mm2_main/tests/mm2_tests/
+# lightning_tests.rs tBTC-TEST-lightning). The template coins are segwit
+# UTXO platforms; SEPOLIAETH is EVM - there is no L2 for it, its legs stay
+# on-chain HTLC. Legacy `enable` rejects Lightning tickers (lp_coins.rs) -
+# activation goes through task::enable_lightning (market_api).
+LN_TEMPLATE_COINS = ("tELEK", "tBTC")
+# avg_blocktime of the platform coins in the template (both measured: the
+# fork testnet settles in ~1 min - the fixture's targets are minutes too).
+LN_PLATFORM_AVG_BLOCKTIME = {"tELEK": 1, "tBTC": 1}
+
+
+def lightning_coin_entry(coin: str) -> dict:
+    """Canonical -lightning coin entry: decimals 11 (msat precision), the
+    fixture's channel config, confirmation targets rebalanced to the fork
+    cadence (6/2/1 fixture-minutes). Deliberately NO allow_outbound_0conf -
+    that flag is test-only in the fixture; a real channel needs
+    its confirmations."""
+    return {
+        "coin": coin + "-lightning",
+        "mm2": 1,
+        "decimals": 11,
+        "our_channels_configs": {
+            "inbound_channels_confirmations": 1,
+            "max_inbound_in_flight_htlc_percent": 90,
+            "their_channel_reserve_sats": 1000,
+        },
+        "counterparty_channel_config_limits": {
+            "outbound_channels_confirmations": 1,
+        },
+        "protocol": {
+            "type": "LIGHTNING",
+            "protocol_data": {
+                "platform": coin,
+                "network": "testnet",
+                "confirmation_targets": {
+                    "background": 6, "normal": 2, "high_priority": 1},
+            },
+        },
+    }
+
+
+def _ensure_lightning_coins(conf: dict) -> None:
+    """Add the platform coins' Lightning counterparts to the daemon conf so
+    they are activation candidates (task::enable_lightning requires the
+    entry to exist in the conf the kernel boots with). Runs on every boot -
+    also over a reused MM2.json (_ensure_conf). Strictly additive and
+    idempotent: existing entries are never touched; platform coins only
+    receive the LN prerequisites (segwit address_format + avg_blocktime)
+    when the key is MISSING - persisted user values always win."""
+    coins = conf.get("coins")
+    if not isinstance(coins, list):
+        return
+    by_name = {}
+    for entry in coins:
+        if isinstance(entry, dict) and entry.get("coin"):
+            by_name.setdefault(str(entry["coin"]), entry)
+    for coin in LN_TEMPLATE_COINS:
+        platform = by_name.get(coin)
+        if platform is None:
+            continue
+        platform.setdefault("segwit", True)
+        platform.setdefault("address_format", {"format": "segwit"})
+        platform.setdefault("avg_blocktime", LN_PLATFORM_AVG_BLOCKTIME[coin])
+    # A counterpart only makes sense on top of its own platform coin - a
+    # -lightning entry for a chain the user doesn't carry would be inert
+    # dead weight in their coin list.
+    additions = [lightning_coin_entry(coin) for coin in LN_TEMPLATE_COINS
+                 if coin in by_name
+                 and coin + "-lightning" not in by_name]
+    if additions:
+        conf["coins"] = list(coins) + additions
+
+
 # Coin entries are the task-#84 device-node template, verbatim (that
 # configuration did a real HTLC swap on-device; see memory elektron-84).
 def _base_conf() -> dict:
@@ -437,6 +512,9 @@ class KdfRuntime:
             # back (identity/secrets untouched) so the spawned process and
             # the on-disk conf agree.
             conf = _sync_settings(conf, self.seednode, self.server_overrides)
+            # #93: make the Lightning counterparts activatable - entries are
+            # injected additively, never touching the user's own coin list.
+            _ensure_lightning_coins(conf)
             with open(self.conf_path, "w") as f:
                 json.dump(conf, f, indent=2)
             os.chmod(self.conf_path, 0o600)
