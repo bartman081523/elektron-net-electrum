@@ -212,6 +212,15 @@ class MarketApi:
             raise MarketApiError("net", f"{type(e).__name__}: {e}") from e
 
     @staticmethod
+    def _num(x) -> str:
+        """Book quantity as decimal string: legacy books return plain
+        strings/numbers, mmrpc-2.0 books return fractions like
+        {"numer": N, "denom": D} (memory #83: Buch-Preise = fraction-Dicts)."""
+        if isinstance(x, dict):
+            return dec_div(x.get("numer", 0), x.get("denom", 1))
+        return str(x)
+
+    @staticmethod
     def parse_orderbook(ob: dict) -> dict:
         if not isinstance(ob, dict):
             raise MarketApiError(-2, "orderbook is not an object")
@@ -220,24 +229,64 @@ class MarketApi:
         asks = []
         for a in ob.get("asks") or []:
             asks.append({
-                "price": str(a.get("price")),
-                "max_volume": str(a.get("maxvolume")),
+                "price": MarketApi._num(a.get("price")),
+                "max_volume": MarketApi._num(a.get("maxvolume")),
                 "address": a.get("address", ""),
             })
         bids = []
         for b in ob.get("bids") or []:
             bids.append({
-                "price": str(b.get("price")),
-                "max_volume": str(b.get("maxvolume")),
+                "price": MarketApi._num(b.get("price")),
+                "max_volume": MarketApi._num(b.get("maxvolume")),
                 "address": b.get("address", ""),
             })
         return {
             "pair": "%s/%s" % (ob.get("base", "?"), ob.get("rel", "?")),
             "asks": asks,
             "bids": bids,
-            "total_asks_base_vol": str(ob.get("total_asks_base_vol", "")),
-            "total_bids_rel_vol": str(ob.get("total_bids_rel_vol", "")),
+            "total_asks_base_vol": MarketApi._num(ob.get("total_asks_base_vol", "")),
+            "total_bids_rel_vol": MarketApi._num(ob.get("total_bids_rel_vol", "")),
         }
+
+
+def rates_from_book(book: dict) -> dict:
+    """#96: derive the market rate from a PARSED orderbook - the kdf book's
+    mid IS the market rate (electrs fx convention, #88: mid=(ask+bid)/2 when
+    both sides quote, else the single quoted side). Shape matches the raw
+    /fx/rates.json snapshot (lowercase keys) so QML keeps one reading path
+    (r.mid/r.source; r.usd/r.eur are absent in the local-kdf form - the QML
+    label tolerates both). Prices are parsed from the wire STRINGS via
+    Decimal (no float artifacts). Raises MarketApiError(-4) on an empty
+    book (best_ask nor best_bid quotes anything)."""
+    if not isinstance(book, dict):
+        raise MarketApiError(-2, "book is not an object")
+    try:
+        ask = (Decimal(dec_str(book["asks"][0]["price"]))
+               if book.get("asks") else None)
+        bid = (Decimal(dec_str(book["bids"][0]["price"]))
+               if book.get("bids") else None)
+    except (ArithmeticError, KeyError, IndexError, TypeError, ValueError):
+        raise MarketApiError(-2, "book entries malformed")
+    if ask is not None and not ask.is_finite():
+        ask = None
+    if bid is not None and not bid.is_finite():
+        bid = None
+    if (ask is None or ask <= 0) and (bid is None or bid <= 0):
+        raise MarketApiError(-4, "empty orderbook - no rate")
+    if ask is not None and ask <= 0:
+        ask = None  # degenerate single side
+    elif bid is not None and bid <= 0:
+        bid = None
+    if ask is not None and bid is not None:
+        with localcontext() as ctx:
+            ctx.prec = 12
+            mid = dec_str((ask + bid) / 2)
+    elif ask is not None:
+        mid = dec_str(ask)
+    else:
+        mid = dec_str(bid)
+    return {"source": "local-kdf", "mid": mid,
+            "pair": book.get("pair") or ""}
 
 
 class KdfClient:
@@ -353,6 +402,14 @@ class KdfClient:
         return await self._post({
             "userpass": self.userpass, "method": "my_recent_swaps",
             "params": {"limit": limit}, "mmrpc": "2.0"})
+
+    async def orderbook(self, base: str, rel: str) -> dict:
+        """#96: the kdf book is the market truth - read it directly from the
+        user's own kdf (same shape the elek-web /rpc proxy relays: legacy
+        top-level askdepth/asks/bids/biddepth, #70/#74/#88 evidence)."""
+        return await self._post({
+            "userpass": self.userpass, "method": "orderbook",
+            "base": base, "rel": rel})
 
     @staticmethod
     def find_uuid(obj) -> "str | None":

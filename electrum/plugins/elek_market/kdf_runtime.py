@@ -173,6 +173,17 @@ class KdfRuntime:
     def rpc_endpoint(self) -> str:
         return "http://%s:%s" % (RPC_HOST, RPC_PORT)
 
+    def rpc_userpass(self) -> "str | None":
+        """rpc_password of the generated conf (#96: the Qt bridge binds an
+        embedded KdfClient to this runtime). None when no conf exists (the
+        runtime never started). Never logged - same secret class as the
+        passphrase (_scrub)."""
+        try:
+            with open(self.conf_path) as f:
+                return json.load(f).get("rpc_password") or None
+        except Exception:
+            return None
+
     def set_notify(self, cb) -> None:
         """cb is invoked (from runtime threads) on every phase change."""
         with self._lock:
