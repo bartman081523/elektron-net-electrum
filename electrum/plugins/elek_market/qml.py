@@ -118,7 +118,11 @@ class QMarketSignalObject(PluginQObject):
         # runtime stays a phase-'unavailable' shell (daemon comes from the
         # configured swap_endpoint). Phase changes surface via kdfStatusReady.
         self._kdf_rt = kdf_runtime.KdfRuntime(
-            base_dir=self.plugin.config.electrum_path)
+            base_dir=self.plugin.config.electrum_path,
+            # #97: plugin network settings reach the runtime at construction
+            # only; they are resolved into the boot conf on every start.
+            seednode=self.plugin.net_seednode,
+            server_overrides=self.plugin.coin_server_overrides())
         self._kdf_rt.set_notify(self.kdfStatusReady.emit)
         if kdf_runtime.is_android():
             self._kdf_rt.start()
@@ -635,6 +639,44 @@ class QMarketSignalObject(PluginQObject):
                              "unspendable": "0", "error": str(e)[:200]}
         self._balances = out
         self.balancesReady.emit()
+
+    # ---- #97: market network settings (embedded runtime) ----------------
+
+    @pyqtProperty('QVariant')
+    def netSeednode(self):
+        """Current seednode setting ('' = template default); the QML page
+        seeds its field from this once at page load."""
+        return self.plugin.net_seednode
+
+    @pyqtProperty('QVariant')
+    def netCoinServers(self):
+        """Per-coin server override map {coin: 'url1,url2'} for the page
+        fields (compact-string view of the parsed settings)."""
+        overrides = self.plugin.coin_server_overrides()
+        return {coin: ','.join(urls) for coin, urls in overrides.items()}
+
+    @pyqtSlot(str, 'QVariant')
+    def save_net_settings(self, seednode: str, servers):
+        """Persist the settings (no runtime restart - the user restarts
+        explicitly; a running kdf must not be killed mid-swap)."""
+        servers = servers if isinstance(servers, dict) else {}
+        self.plugin.set_net_settings(seednode, servers or {})
+
+    @pyqtSlot()
+    def restart_runtime(self):
+        """Restart the embedded runtime so saved settings take effect.
+        Runs in a worker thread: stop() joins the process (STOP_GRACE
+        worst case), which must not block the Qt event loop."""
+        import threading as _t
+        rt = self._kdf_rt
+
+        def _apply():
+            try:
+                rt.stop()
+                rt.start()
+            except Exception:
+                pass
+        _t.Thread(target=_apply, daemon=True).start()
 
 
 class Plugin(ElekMarketBase):

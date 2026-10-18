@@ -8,6 +8,7 @@ from electrum.plugin import BasePlugin
 from electrum.simple_config import SimpleConfig, ConfigVar
 
 from .market_api import MarketApi, MarketApiError  # noqa: F401
+from . import kdf_runtime  # noqa: F401  (#97 settings parser lives here)
 
 if TYPE_CHECKING:
     from ..gui.qt import ElectrumWindow
@@ -32,6 +33,15 @@ SimpleConfig.ELEK_MARKET_REL = ConfigVar(
 # the user's own kdf (KdfClient.orderbook). Default "" (falsy = off).
 SimpleConfig.ELEK_MARKET_DIAGNOSTIC_REST = ConfigVar(
     key="plugins.%s.diagnostic_rest" % plugin_name,
+    default="", type_=str, plugin=plugin_name)
+# #97: market network settings for the embedded kdf runtime - seednode
+# override (comma-separated list allowed) and compact per-coin server
+# overrides 'COIN=url1,url2;COIN2=url'. Defaults "" = built-in templates.
+SimpleConfig.ELEK_MARKET_SEEDNODE = ConfigVar(
+    key="plugins.%s.seednode" % plugin_name,
+    default="", type_=str, plugin=plugin_name)
+SimpleConfig.ELEK_MARKET_COIN_SERVERS = ConfigVar(
+    key="plugins.%s.coin_servers" % plugin_name,
     default="", type_=str, plugin=plugin_name)
 
 
@@ -64,6 +74,26 @@ class Plugin(BasePlugin):
         Only this property may gate MarketApi usage in the QML bridge."""
         raw = self.config.ELEK_MARKET_DIAGNOSTIC_REST or ""
         return raw.strip().lower() in ("1", "true", "yes", "on")
+
+    # -- #97: market network settings --------------------------------------
+
+    @property
+    def net_seednode(self) -> str:
+        """Raw seednode setting ('' = built-in template default)."""
+        return (self.config.ELEK_MARKET_SEEDNODE or "").strip()
+
+    def coin_server_overrides(self) -> dict:
+        """Parsed per-coin server overrides {coin: [url, ...]}."""
+        return kdf_runtime.parse_server_overrides(
+            self.config.ELEK_MARKET_COIN_SERVERS or "")
+
+    def set_net_settings(self, seednode: str, coin_servers):
+        """Persist seednode and (optionally) the compact per-coin server
+        map. coin_servers=None leaves the override setting untouched."""
+        self.config.ELEK_MARKET_SEEDNODE = (seednode or "").strip()
+        if coin_servers is not None:
+            self.config.ELEK_MARKET_COIN_SERVERS = (
+                kdf_runtime.encode_server_overrides(coin_servers))
 
     @property
     def pair(self) -> tuple:
