@@ -39,6 +39,18 @@ NETID = 8888
 SEEDNODE = "wss://elektron-market.onrender.com"
 LOG_TAIL_BYTES = 4000
 
+# #97 template defaults, restored at runtime boot when a settings override
+# is cleared (the conf file is re-resolved on every start - settings are
+# never stale in the persisted conf). SEPOLIAETH has no template urls: the
+# kdf built-in public RPC nodes are the default, so a cleared override
+# means the urls key is simply dropped.
+TEMPLATE_SEEDNODES = [SEEDNODE]
+TEMPLATE_SERVERS = {
+    "tELEK": ["127.0.0.1:50005"],
+    "tBTC": ["127.0.0.1:50005"],
+    "SEPOLIAETH": None,
+}
+
 PHASE_UNAVAILABLE = "unavailable"
 PHASE_STOPPED = "stopped"
 PHASE_STARTING = "starting"
@@ -140,10 +152,73 @@ def _base_conf() -> dict:
     }
 
 
+def parse_server_overrides(raw) -> dict:
+    """#97: compact per-coin server overrides as a dict - format
+    'COIN=url1,url2;COIN2=url3'. Empty coin or empty url chunks are dropped,
+    whitespace tolerated, tickers case-sensitive (they are the conf keys)."""
+    out = {}
+    for chunk in (raw or "").split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        coin, _, urls = chunk.partition("=")
+        coin = coin.strip()
+        urls = [u.strip() for u in urls.split(",") if u.strip()]
+        if coin and urls:
+            out[coin] = urls
+    return out
+
+
+def encode_server_overrides(mapping) -> str:
+    """Inverse of parse_server_overrides - deterministic compact form
+    'COIN=url1,url2;COIN2=url3' (mapping order preserved, empty entries
+    dropped: an absent coin means 'use the template default')."""
+    parts = []
+    for coin, urls in (mapping or {}).items():
+        urls = [u for u in (urls or []) if isinstance(u, str) and u.strip()]
+        if urls:
+            parts.append("%s=%s" % (str(coin).strip(), ",".join(urls)))
+    return ";".join(parts)
+
+
+def _sync_settings(conf: dict, seednode: str, overrides: dict) -> dict:
+    """#97: user settings win at boot. seednode '' -> template list; for
+    template coins an override replaces the electrum (UTXO) / urls (ETH)
+    array and a cleared override restores the template default. Unknown
+    coins stay untouched unless they carry an override."""
+    seeds = [s.strip() for s in (seednode or "").split(",") if s.strip()]
+    conf["seednodes"] = list(seeds or TEMPLATE_SEEDNODES)
+    for entry in conf.get("coins", []):
+        ticker = entry.get("coin") or ""
+        urls = [u for u in overrides.get(ticker) or []
+                if isinstance(u, str) and u.strip()]
+        is_eth = entry.get("protocol", {}).get("type") == "ETH"
+        if urls:
+            if is_eth:
+                entry["urls"] = urls
+            else:
+                entry["electrum"] = [{"url": u, "protocol": "TCP"}
+                                     for u in urls]
+        elif ticker in TEMPLATE_SERVERS:
+            if is_eth:
+                entry.pop("urls", None)
+            else:
+                entry["electrum"] = [{"url": u, "protocol": "TCP"}
+                                     for u in (TEMPLATE_SERVERS[ticker] or [])]
+    return conf
+
+
 class KdfRuntime:
     """Lifecycle owner of the embedded kdf market runtime (Android only)."""
 
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: str, seednode: str = "",
+                 server_overrides: dict | None = None):
+        """#97: seednode (comma-separated list allowed, '' = template
+        default) and per-coin server overrides (parsed dict) arrive from
+        the plugin settings; they are resolved into the boot conf on every
+        start (see _run / _sync_settings), never mid-flight."""
+        self.seednode = (seednode or "").strip()
+        self.server_overrides = dict(server_overrides or {})
         self.dir = os.path.join(base_dir, "kdf")
         self.conf_path = os.path.join(self.dir, "MM2.json")
         self.log_path = os.path.join(self.dir, "kdf.log")
@@ -309,6 +384,13 @@ class KdfRuntime:
         try:
             self._kill_stale()
             conf = self._ensure_conf()
+            # #97: resolve the current settings into the conf and write it
+            # back (identity/secrets untouched) so the spawned process and
+            # the on-disk conf agree.
+            conf = _sync_settings(conf, self.seednode, self.server_overrides)
+            with open(self.conf_path, "w") as f:
+                json.dump(conf, f, indent=2)
+            os.chmod(self.conf_path, 0o600)
             bin_path = binary_path()
             if not bin_path or not os.path.isfile(bin_path):
                 raise RuntimeError("libkdfbin.so not found (APK packaged without it?)")

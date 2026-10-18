@@ -96,6 +96,17 @@ ElDialog {
         root.balances = MarketPlugin.balances || {}
     }
 
+    // #97: seed the network settings fields from the plugin state exactly
+    // once at page load - refreshAll must never clobber the user's typing.
+    function nsDefaults() {
+        if (MarketPlugin == null || MarketPlugin == undefined) return
+        nsSeed.text = String(MarketPlugin.netSeednode || '')
+        var cs = MarketPlugin.netCoinServers || {}
+        nsTelek.text = String(cs.tELEK || '')
+        nsTbtc.text = String(cs.tBTC || '')
+        nsSep.text = String(cs.SEPOLIAETH || '')
+    }
+
     Connections {
         target: MarketPlugin
         function onRatesReady() {
@@ -517,6 +528,71 @@ ElDialog {
                     text: ''
                 }
 
+                // #97 market network settings: seednode + per-coin servers
+                // for the embedded runtime. A save only persists - the kdf
+                // must not be killed mid-swap; the restart is its own button.
+                Heading { text: qsTr('Netzwerk') }
+                Label {
+                    Layout.fillWidth: true
+                    font.pixelSize: 11
+                    color: constants.mutedForeground
+                    wrapMode: Text.WrapAnywhere
+                    text: qsTr('Seednode der Market-Federation und Server je Coin (leer = eingebaute Standard-Server). Wirksam nach Runtime-Neustart.')
+                }
+                TextField {
+                    id: nsSeed
+                    Layout.fillWidth: true
+                    placeholderText: qsTr('Seednode, z.B. wss://elektron-market.onrender.com')
+                }
+                TextField {
+                    id: nsTelek
+                    Layout.fillWidth: true
+                    placeholderText: qsTr('tELEK-Server (leer = Standard)')
+                }
+                TextField {
+                    id: nsTbtc
+                    Layout.fillWidth: true
+                    placeholderText: qsTr('tBTC-Server (leer = Standard)')
+                }
+                TextField {
+                    id: nsSep
+                    Layout.fillWidth: true
+                    placeholderText: qsTr('SEPOLIAETH-RPC (leer = Standard)')
+                }
+                Label {
+                    id: netHint
+                    Layout.fillWidth: true
+                    font.pixelSize: 11
+                    wrapMode: Text.WrapAnywhere
+                    color: constants.mutedForeground
+                    text: ''
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    FlatButton {
+                        Layout.fillWidth: true
+                        text: qsTr('Speichern')
+                        onClicked: {
+                            if (MarketPlugin == null || MarketPlugin == undefined) { netHint.text = qsTr('plugin missing'); return }
+                            MarketPlugin.save_net_settings(nsSeed.text.trim(), {
+                                tELEK: nsTelek.text.trim(),
+                                tBTC: nsTbtc.text.trim(),
+                                SEPOLIAETH: nsSep.text.trim()
+                            })
+                            netHint.text = qsTr('Gespeichert - wirksam bei Runtime-Neustart')
+                        }
+                    }
+                    FlatButton {
+                        Layout.fillWidth: true
+                        text: qsTr('Runtime neu starten')
+                        onClicked: {
+                            if (MarketPlugin == null || MarketPlugin == undefined) { netHint.text = qsTr('plugin missing'); return }
+                            netHint.text = qsTr('Runtime startet neu ...')
+                            MarketPlugin.restart_runtime()
+                        }
+                    }
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
                     FlatButton {
@@ -654,6 +730,7 @@ ElDialog {
     Component.onCompleted: {
         if (MarketPlugin !== null && MarketPlugin !== undefined && MarketPlugin.coins)
             root.coins = MarketPlugin.coins
+        nsDefaults()
         refreshAll()
     }
 }
