@@ -12,10 +12,11 @@
 # identity and swap history survive app restarts. A persisted rpc_password
 # that fails the kdf password policy is regenerated in place (the b93/b94
 # confs carried one that mm2 rejects); the passphrase is never rewritten -
-# that is the identity. The seed must never be logged. Coins are the task-#84 device template (SEPOLIAETH + the two
-# fork-testnet UTXO slots), electrum servers point at 127.0.0.1:50005
-# (adb-reversed by the market flow), seednode is the Render federation
-# entry. A stopped-but-live previous instance (app restart) is terminated
+# that is the identity. The seed must never be logged. Coins are the #101
+# app-mainnet template: mirrors of the live-net registry entries (ELEK,
+# BTC, ETH) with the #73 public electrum/RPC endpoints and the mainnet
+# swap contract; seednode is the Render federation entry. A
+# stopped-but-live previous instance (app restart) is terminated
 # via its pid file before a new one is spawned.
 #
 # Desktop (non-Android) is inert: start() moves the phase to 'unavailable'
@@ -29,6 +30,12 @@ import subprocess
 import threading
 import time
 import urllib.request
+
+# #101: the mainnet template constants live in market_api (single source -
+# the same tuples the QML enable path consumes; market_api never imports
+# this module, so the direction stays one-way).
+from .market_api import (BTC_ELECTRUM_SERVERS, ELEK_ELECTRUM_SERVERS,
+                         ETH_MAINNET_RPC_URLS, ETH_MAINNET_SWAP_CONTRACT)
 
 RPC_HOST = "127.0.0.1"
 RPC_PORT = 7821
@@ -44,14 +51,15 @@ LOG_TAIL_BYTES = 4000
 
 # #97 template defaults, restored at runtime boot when a settings override
 # is cleared (the conf file is re-resolved on every start - settings are
-# never stale in the persisted conf). SEPOLIAETH has no template urls: the
-# kdf built-in public RPC nodes are the default, so a cleared override
-# means the urls key is simply dropped.
+# never stale in the persisted conf). #101: the UTXO template servers are
+# the #73 public mainnet electrum relays (the app has no host-local node);
+# ETH has no template urls - the kdf built-in public RPC nodes are the
+# default, so a cleared override means the urls key is simply dropped.
 TEMPLATE_SEEDNODES = [SEEDNODE]
 TEMPLATE_SERVERS = {
-    "tELEK": ["127.0.0.1:50005"],
-    "tBTC": ["127.0.0.1:50005"],
-    "SEPOLIAETH": None,
+    "ELEK": list(ELEK_ELECTRUM_SERVERS),
+    "BTC": list(BTC_ELECTRUM_SERVERS),
+    "ETH": None,
 }
 
 # #98: domain-separated derivation of the kdf trading identity from the
@@ -113,22 +121,25 @@ def binary_path() -> str | None:
 # #93 Lightning: the -lightning coin entries never live in the registries
 # (coins/upstream_coins + coins/elektron_coins carry none) - they are
 # always constructed, mirroring the kdf fixture (mm2_main/tests/mm2_tests/
-# lightning_tests.rs tBTC-TEST-lightning). The template coins are segwit
-# UTXO platforms; SEPOLIAETH is EVM - there is no L2 for it, its legs stay
-# on-chain HTLC. Legacy `enable` rejects Lightning tickers (lp_coins.rs) -
-# activation goes through task::enable_lightning (market_api).
-LN_TEMPLATE_COINS = ("tELEK", "tBTC")
-# avg_blocktime of the platform coins in the template (both measured: the
-# fork testnet settles in ~1 min - the fixture's targets are minutes too).
-LN_PLATFORM_AVG_BLOCKTIME = {"tELEK": 1, "tBTC": 1}
+# lightning_tests.rs, protocol_data network "mainnet" here). The template
+# coins are segwit UTXO platforms; ETH is EVM - there is no L2 for it, its
+# legs stay on-chain HTLC. Legacy `enable` rejects Lightning tickers
+# (lp_coins.rs) - activation goes through task::enable_lightning
+# (market_api).
+LN_TEMPLATE_COINS = ("ELEK", "BTC")
+# avg_blocktime of the platform coins, registry-mirrored verbatim (coins/
+# elektron_coins): BTC 600 s (the fixture's confirmation targets track
+# mainnet minutes); ELEK 1 - the registry does not name the unit (vs
+# minutes) for it, so the value is mirrored verbatim.
+LN_PLATFORM_AVG_BLOCKTIME = {"ELEK": 1, "BTC": 600}
 
 
 def lightning_coin_entry(coin: str) -> dict:
     """Canonical -lightning coin entry: decimals 11 (msat precision), the
-    fixture's channel config, confirmation targets rebalanced to the fork
-    cadence (6/2/1 fixture-minutes). Deliberately NO allow_outbound_0conf -
-    that flag is test-only in the fixture; a real channel needs
-    its confirmations."""
+    fixture's channel config, confirmation targets 6/2/1 (mainnet blocks;
+    see market_api.LN_CONFIRMATION_TARGETS). Deliberately NO
+    allow_outbound_0conf - that flag is test-only in the fixture; a real
+    channel needs its confirmations."""
     return {
         "coin": coin + "-lightning",
         "mm2": 1,
@@ -145,7 +156,7 @@ def lightning_coin_entry(coin: str) -> dict:
             "type": "LIGHTNING",
             "protocol_data": {
                 "platform": coin,
-                "network": "testnet",
+                "network": "mainnet",
                 "confirmation_targets": {
                     "background": 6, "normal": 2, "high_priority": 1},
             },
@@ -230,8 +241,13 @@ def _gen_rpc_password() -> str:
             return pw
 
 
-# Coin entries are the task-#84 device-node template, verbatim (that
-# configuration did a real HTLC swap on-device; see memory elektron-84).
+# #101: coin entries are mainnet mirrors of the live-net registry (coins/
+# elektron_coins) with the app-template wiring on top - electrum/urls point
+# at the #73 public endpoints (the app has no host-local node to adb-reverse
+# to), and ETH carries the mainnet swap contract. BTC is adapted to segwit
+# (address_format + m/84') while the registry entry still declares the
+# legacy m/44' derivation. links/trezor_coin/wallet_only are registry
+# cosmetics, not runtime conf, and stay out of the template.
 def _base_conf() -> dict:
     return {
         "gui": "elektron-net",
@@ -241,49 +257,14 @@ def _base_conf() -> dict:
         "seednodes": [SEEDNODE],
         "coins": [
             {
-                "coin": "SEPOLIAETH",
-                "name": "ethereum",
-                "fname": "Ethereum Sepolia (kdf-native, public RPC nodes)",
-                "derivation_path": "m/44'/60'",
-                "protocol": {"type": "ETH", "protocol_data": {"chain_id": 11155111}},
-                "max_eth_tx_type": 2,
-                "mm2": 1,
-                "is_testnet": True,
-            },
-            {
-                "coin": "tBTC",
-                "name": "bitcoin",
-                "fname": "tBTC (Elektron fork-testnet electrs-tn)",
-                "pubtype": 111,
-                "p2shtype": 196,
-                "wiftype": 239,
+                "coin": "ELEK",
+                "name": "elektron",
+                "fname": "Elektron",
+                "pubtype": 0,
+                "p2shtype": 5,
+                "wiftype": 128,
                 "segwit": True,
-                "bech32_hrp": "tb",
-                "address_format": {"format": "segwit"},
-                "decimals": 8,
-                "txfee": 1000,
-                "estimate_fee_mode": "ECONOMICAL",
-                "estimate_fee_blocks": 4,
-                "avg_blocktime": 1,
-                "required_confirmations": 2,
-                "mature_confirmations": 1,
-                "derivation_path": "m/84'/1'",
-                "orderbook_ticker": "tBTC",
-                "rpcport": 18332,
-                "mm2": 1,
-                "is_testnet": True,
-                "protocol": {"type": "UTXO"},
-                "electrum": [{"url": "127.0.0.1:50005", "protocol": "TCP"}],
-            },
-            {
-                "coin": "tELEK",
-                "name": "elektron-testnet",
-                "fname": "Elektron (testnet)",
-                "pubtype": 111,
-                "p2shtype": 196,
-                "wiftype": 239,
-                "segwit": True,
-                "bech32_hrp": "tb",
+                "bech32_hrp": "be",
                 "address_format": {"format": "segwit"},
                 "decimals": 8,
                 "txfee": 1000,
@@ -293,11 +274,55 @@ def _base_conf() -> dict:
                 "required_confirmations": 2,
                 "mature_confirmations": 1,
                 "derivation_path": "m/84'/1370'",
-                "orderbook_ticker": "tELEK",
-                "rpcport": 18332,
+                "orderbook_ticker": "ELEK",
+                "rpcport": 8332,
                 "mm2": 1,
                 "protocol": {"type": "UTXO"},
-                "electrum": [{"url": "127.0.0.1:50005", "protocol": "TCP"}],
+                "electrum": [{"url": u, "protocol": "TCP"}
+                             for u in ELEK_ELECTRUM_SERVERS],
+            },
+            {
+                "coin": "BTC",
+                "name": "bitcoin",
+                "fname": "Bitcoin",
+                "pubtype": 0,
+                "p2shtype": 5,
+                "wiftype": 128,
+                "segwit": True,
+                "bech32_hrp": "bc",
+                # #101 divergence from the registry entry: the registry BTC
+                # coin declares the legacy m/44' derivation and no
+                # address_format; the app is segwit-only, so the template
+                # adds address_format segwit + BIP84 m/84'/0'.
+                "address_format": {"format": "segwit"},
+                "txfee": 0,
+                "estimate_fee_mode": "ECONOMICAL",
+                "avg_blocktime": 600,
+                "required_confirmations": 1,
+                "derivation_path": "m/84'/0'",
+                "protocol": {"type": "UTXO", "chain_variant": "BTC"},
+                "rpcport": 8332,
+                "mm2": 1,
+                "sign_message_prefix": "Bitcoin Signed Message:\n",
+                "electrum": [{"url": u, "protocol": "TCP"}
+                             for u in BTC_ELECTRUM_SERVERS],
+            },
+            {
+                "coin": "ETH",
+                "name": "ethereum",
+                "fname": "Ethereum",
+                "derivation_path": "m/44'/60'",
+                "max_eth_tx_type": 2,
+                "mm2": 1,
+                "chain_id": 1,
+                "avg_blocktime": 15,
+                "required_confirmations": 3,
+                "rpcport": 80,
+                "swap_gas_fee_policy": "Medium",
+                "sign_message_prefix": "Ethereum Signed Message:\n",
+                "protocol": {"type": "ETH", "protocol_data": {"chain_id": 1}},
+                "urls": list(ETH_MAINNET_RPC_URLS),
+                "swap_contract_address": ETH_MAINNET_SWAP_CONTRACT,
             },
         ],
         "myipaddr": None,

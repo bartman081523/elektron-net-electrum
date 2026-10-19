@@ -104,9 +104,9 @@ ElDialog {
         if (MarketPlugin == null || MarketPlugin == undefined) return
         nsSeed.text = String(MarketPlugin.netSeednode || '')
         var cs = MarketPlugin.netCoinServers || {}
-        nsTelek.text = String(cs.tELEK || '')
-        nsTbtc.text = String(cs.tBTC || '')
-        nsSep.text = String(cs.SEPOLIAETH || '')
+        nsTelek.text = String(cs.ELEK || '')
+        nsTbtc.text = String(cs.BTC || '')
+        nsSep.text = String(cs.ETH || '')
     }
 
     Connections {
@@ -596,17 +596,17 @@ ElDialog {
                 TextField {
                     id: nsTelek
                     Layout.fillWidth: true
-                    placeholderText: qsTr('tELEK-Server (leer = Standard)')
+                    placeholderText: qsTr('ELEK-Server (leer = Standard)')
                 }
                 TextField {
                     id: nsTbtc
                     Layout.fillWidth: true
-                    placeholderText: qsTr('tBTC-Server (leer = Standard)')
+                    placeholderText: qsTr('BTC-Server (leer = Standard)')
                 }
                 TextField {
                     id: nsSep
                     Layout.fillWidth: true
-                    placeholderText: qsTr('SEPOLIAETH-RPC (leer = Standard)')
+                    placeholderText: qsTr('ETH-RPC (leer = Standard)')
                 }
                 Label {
                     id: netHint
@@ -624,9 +624,9 @@ ElDialog {
                         onClicked: {
                             if (MarketPlugin == null || MarketPlugin == undefined) { netHint.text = qsTr('plugin missing'); return }
                             MarketPlugin.save_net_settings(nsSeed.text.trim(), {
-                                tELEK: nsTelek.text.trim(),
-                                tBTC: nsTbtc.text.trim(),
-                                SEPOLIAETH: nsSep.text.trim()
+                                ELEK: nsTelek.text.trim(),
+                                BTC: nsTbtc.text.trim(),
+                                ETH: nsSep.text.trim()
                             })
                             netHint.text = qsTr('Gespeichert - wirksam bei Runtime-Neustart')
                         }

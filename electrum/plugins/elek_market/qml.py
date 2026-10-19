@@ -628,7 +628,7 @@ class QMarketSignalObject(PluginQObject):
     def balances(self):
         return self._balances
 
-    # ---- #93 lightning counterparts (tELEK/tBTC; SEPOLIAETH is EVM) ----
+    # ---- #93 lightning counterparts (ELEK/BTC; ETH is EVM) ----
 
     @pyqtProperty('QVariantList')
     def lnCoins(self):

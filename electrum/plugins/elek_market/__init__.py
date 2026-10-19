@@ -24,10 +24,10 @@ def _endpoint_config():
 SimpleConfig.ELEK_MARKET_ENDPOINT = _endpoint_config()
 SimpleConfig.ELEK_MARKET_BASE = ConfigVar(
     key="plugins.%s.base" % plugin_name,
-    default="tELEK", type_=str, plugin=plugin_name)
+    default="ELEK", type_=str, plugin=plugin_name)
 SimpleConfig.ELEK_MARKET_REL = ConfigVar(
     key="plugins.%s.rel" % plugin_name,
-    default="tBTC", type_=str, plugin=plugin_name)
+    default="BTC", type_=str, plugin=plugin_name)
 # #96: the Render REST layer (/fx/rates.json + /rpc orderbook) is a
 # DIAGNOSTIC fallback only - the market truth is the kdf orderbook read from
 # the user's own kdf (KdfClient.orderbook). Default "" (falsy = off).

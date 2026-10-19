@@ -109,33 +109,35 @@ def electrum_servers(ticker: str) -> list:
     return [{"url": u, "protocol": "TCP"} for u in urls]
 
 
-# Coins tradeable in the app's TESTNET market (the #91 mandate: btc, eth,
-# elek). Testnet pairs stay the DEFAULT; mainnet pairs live above (branch
-# split #73).
-TESTNET_COINS = ("tELEK", "tBTC", "SEPOLIAETH")
+# #101: the app's tradeable coins are MAINNET_COINS above (the #91 mandate:
+# btc, eth, elek); this mainnet branch carries no testnet coin list.
 
 # #93 Lightning: the -lightning coin entries never live in the coin
 # registries (coins/upstream_coins + coins/elektron_coins carry none) -
 # callers always construct them, mirroring the kdf test fixture
-# (mm2_main/tests/mm2_tests/lightning_tests.rs tBTC-TEST-lightning).
+# (mm2_main/tests/mm2_tests/lightning_tests.rs, whose protocol_data carries
+# network "testnet"; #101 mirrors it with "mainnet" for this branch's
+# platform coins).
 # Legacy `enable` rejects Lightning tickers outright (lp_coins.rs), so
 # activation goes through the task::enable_lightning API (below).
 LN_TICKER_SUFFIX = "-lightning"
 LN_DECIMALS = 11  # msat precision, mirrors the fixture
-# The fixture's targets (12/6/1) track BTC-mainnet minutes; the fork
-# testnet settles much faster (avg_blocktime 1), so rebalance to 6/2/1.
+# The fixture's targets are 12/6/1; rebalanced to 6/2/1 blocks = classic
+# BTC-mainnet practice on 600 s blocks (about 1 h background / ~20 min
+# normal / next block). The template platform entries mirror the
+# registry's avg_blocktime per coin (coins/elektron_coins).
 LN_CONFIRMATION_TARGETS = {"background": 6, "normal": 2, "high_priority": 1}
 # UTXO segwit platforms with a Lightning counterpart in this app.
-# SEPOLIAETH is EVM - there is no L2 for it, its legs stay on-chain HTLC.
-LN_SUPPORTED = ("tELEK", "tBTC")
+# ETH is EVM - there is no L2 for it, its legs stay on-chain HTLC.
+LN_SUPPORTED = ("ELEK", "BTC")
 
 
 def lightning_ticker(coin: str) -> str:
-    """Ticker of a coin's Lightning counterpart (tELEK -> tELEK-lightning)."""
+    """Ticker of a coin's Lightning counterpart (ELEK -> ELEK-lightning)."""
     return coin + LN_TICKER_SUFFIX
 
 
-def lightning_coin_conf(coin: str, network: str = "testnet") -> dict:
+def lightning_coin_conf(coin: str, network: str = "mainnet") -> dict:
     """One canonical -lightning coin entry (fixture form above). The
     platform coin must already carry the LN prerequisites: segwit
     address_format + avg_blocktime (both sit in the app template)."""
