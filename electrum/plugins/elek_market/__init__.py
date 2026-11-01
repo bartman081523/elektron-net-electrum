@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from electrum.plugin import BasePlugin
 from electrum.simple_config import SimpleConfig, ConfigVar
 
-from .market_api import MarketApi, MarketApiError  # noqa: F401
+from .market_api import MarketApi, MarketApiError, is_testnet  # noqa: F401
 from . import kdf_runtime  # noqa: F401  (#97 settings parser lives here)
 
 if TYPE_CHECKING:
@@ -97,8 +97,14 @@ class Plugin(BasePlugin):
 
     @property
     def pair(self) -> tuple:
-        base = self.config.ELEK_MARKET_BASE
-        rel = self.config.ELEK_MARKET_REL
+        default_base = "tELEK" if is_testnet() else "ELEK"
+        default_rel = "tBTC" if is_testnet() else "BTC"
+        base = self.config.ELEK_MARKET_BASE or default_base
+        rel = self.config.ELEK_MARKET_REL or default_rel
+        if is_testnet() and base in ("ELEK", "BTC"):
+            base, rel = "tELEK", "tBTC"
+        elif not is_testnet() and base in ("tELEK", "tBTC"):
+            base, rel = "ELEK", "BTC"
         return base, rel
 
     def set_pair(self, base: str, rel: str):

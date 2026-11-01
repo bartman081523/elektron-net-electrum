@@ -35,7 +35,10 @@ import urllib.request
 # the same tuples the QML enable path consumes; market_api never imports
 # this module, so the direction stays one-way).
 from .market_api import (BTC_ELECTRUM_SERVERS, ELEK_ELECTRUM_SERVERS,
-                         ETH_MAINNET_RPC_URLS, ETH_MAINNET_SWAP_CONTRACT)
+                         TBTC_ELECTRUM_SERVERS, TELEK_ELECTRUM_SERVERS,
+                         ETH_MAINNET_RPC_URLS, ETH_MAINNET_SWAP_CONTRACT,
+                         is_testnet, lightning_ticker, lightning_coin_conf,
+                         LN_SUPPORTED, LN_CONFIRMATION_TARGETS)
 
 RPC_HOST = "127.0.0.1"
 RPC_PORT = 7821
@@ -51,15 +54,15 @@ LOG_TAIL_BYTES = 4000
 
 # #97 template defaults, restored at runtime boot when a settings override
 # is cleared (the conf file is re-resolved on every start - settings are
-# never stale in the persisted conf). #101: the UTXO template servers are
-# the #73 public mainnet electrum relays (the app has no host-local node);
-# ETH has no template urls - the kdf built-in public RPC nodes are the
-# default, so a cleared override means the urls key is simply dropped.
+# never stale in the persisted conf). Supports both mainnet and testnet.
 TEMPLATE_SEEDNODES = [SEEDNODE]
 TEMPLATE_SERVERS = {
     "ELEK": list(ELEK_ELECTRUM_SERVERS),
     "BTC": list(BTC_ELECTRUM_SERVERS),
     "ETH": None,
+    "tELEK": list(TELEK_ELECTRUM_SERVERS),
+    "tBTC": list(TBTC_ELECTRUM_SERVERS),
+    "SEPOLIAETH": None,
 }
 
 # #98: domain-separated derivation of the kdf trading identity from the
@@ -126,20 +129,19 @@ def binary_path() -> str | None:
 # legs stay on-chain HTLC. Legacy `enable` rejects Lightning tickers
 # (lp_coins.rs) - activation goes through task::enable_lightning
 # (market_api).
-LN_TEMPLATE_COINS = ("ELEK", "BTC")
+LN_TEMPLATE_COINS = ("ELEK", "BTC", "tELEK", "tBTC")
 # avg_blocktime of the platform coins, registry-mirrored verbatim (coins/
 # elektron_coins): BTC 600 s (the fixture's confirmation targets track
 # mainnet minutes); ELEK 1 - the registry does not name the unit (vs
 # minutes) for it, so the value is mirrored verbatim.
-LN_PLATFORM_AVG_BLOCKTIME = {"ELEK": 1, "BTC": 600}
+LN_PLATFORM_AVG_BLOCKTIME = {"ELEK": 1, "BTC": 600, "tELEK": 1, "tBTC": 1}
 
 
 def lightning_coin_entry(coin: str) -> dict:
     """Canonical -lightning coin entry: decimals 11 (msat precision), the
-    fixture's channel config, confirmation targets 6/2/1 (mainnet blocks;
-    see market_api.LN_CONFIRMATION_TARGETS). Deliberately NO
-    allow_outbound_0conf - that flag is test-only in the fixture; a real
-    channel needs its confirmations."""
+    fixture's channel config, confirmation targets 6/2/1. Uses testnet or mainnet
+    network parameter according to coin prefix or active network."""
+    net = "testnet" if (coin.startswith("t") or is_testnet()) else "mainnet"
     return {
         "coin": coin + "-lightning",
         "mm2": 1,
@@ -156,7 +158,7 @@ def lightning_coin_entry(coin: str) -> dict:
             "type": "LIGHTNING",
             "protocol_data": {
                 "platform": coin,
-                "network": "mainnet",
+                "network": net,
                 "confirmation_targets": {
                     "background": 6, "normal": 2, "high_priority": 1},
             },
@@ -249,13 +251,70 @@ def _gen_rpc_password() -> str:
 # legacy m/44' derivation. links/trezor_coin/wallet_only are registry
 # cosmetics, not runtime conf, and stay out of the template.
 def _base_conf() -> dict:
-    return {
-        "gui": "elektron-net",
-        "netid": NETID,
-        "rpcip": RPC_HOST,
-        "rpcport": RPC_PORT,
-        "seednodes": [SEEDNODE],
-        "coins": [
+    if is_testnet():
+        coins = [
+            {
+                "coin": "SEPOLIAETH",
+                "name": "ethereum",
+                "fname": "Ethereum Sepolia (kdf-native, public RPC nodes)",
+                "derivation_path": "m/44'/60'",
+                "protocol": {"type": "ETH", "protocol_data": {"chain_id": 11155111}},
+                "max_eth_tx_type": 2,
+                "mm2": 1,
+                "is_testnet": True,
+            },
+            {
+                "coin": "tBTC",
+                "name": "bitcoin",
+                "fname": "tBTC (Elektron fork-testnet electrs-tn)",
+                "pubtype": 111,
+                "p2shtype": 196,
+                "wiftype": 239,
+                "segwit": True,
+                "bech32_hrp": "tb",
+                "address_format": {"format": "segwit"},
+                "decimals": 8,
+                "txfee": 1000,
+                "estimate_fee_mode": "ECONOMICAL",
+                "estimate_fee_blocks": 4,
+                "avg_blocktime": 1,
+                "required_confirmations": 2,
+                "mature_confirmations": 1,
+                "derivation_path": "m/84'/1'",
+                "orderbook_ticker": "tBTC",
+                "rpcport": 18332,
+                "mm2": 1,
+                "is_testnet": True,
+                "protocol": {"type": "UTXO"},
+                "electrum": [{"url": u, "protocol": "TCP"} for u in TBTC_ELECTRUM_SERVERS],
+            },
+            {
+                "coin": "tELEK",
+                "name": "elektron-testnet",
+                "fname": "Elektron (testnet)",
+                "pubtype": 111,
+                "p2shtype": 196,
+                "wiftype": 239,
+                "segwit": True,
+                "bech32_hrp": "tb",
+                "address_format": {"format": "segwit"},
+                "decimals": 8,
+                "txfee": 1000,
+                "estimate_fee_mode": "ECONOMICAL",
+                "estimate_fee_blocks": 4,
+                "avg_blocktime": 1,
+                "required_confirmations": 2,
+                "mature_confirmations": 1,
+                "derivation_path": "m/84'/1370'",
+                "orderbook_ticker": "tELEK",
+                "rpcport": 18332,
+                "mm2": 1,
+                "protocol": {"type": "UTXO"},
+                "electrum": [{"url": u, "protocol": "TCP"} for u in TELEK_ELECTRUM_SERVERS],
+            },
+        ]
+    else:
+        coins = [
             {
                 "coin": "ELEK",
                 "name": "elektron",
@@ -324,7 +383,14 @@ def _base_conf() -> dict:
                 "urls": list(ETH_MAINNET_RPC_URLS),
                 "swap_contract_address": ETH_MAINNET_SWAP_CONTRACT,
             },
-        ],
+        ]
+    return {
+        "gui": "elektron-net",
+        "netid": NETID,
+        "rpcip": RPC_HOST,
+        "rpcport": RPC_PORT,
+        "seednodes": [SEEDNODE],
+        "coins": coins,
         "myipaddr": None,
         "rproxy_ips": [],
     }
@@ -353,7 +419,10 @@ def encode_server_overrides(mapping) -> str:
     dropped: an absent coin means 'use the template default')."""
     parts = []
     for coin, urls in (mapping or {}).items():
-        urls = [u for u in (urls or []) if isinstance(u, str) and u.strip()]
+        if isinstance(urls, str):
+            urls = [u.strip() for u in urls.split(",") if u.strip()]
+        else:
+            urls = [u for u in (urls or []) if isinstance(u, str) and u.strip()]
         if urls:
             parts.append("%s=%s" % (str(coin).strip(), ",".join(urls)))
     return ";".join(parts)

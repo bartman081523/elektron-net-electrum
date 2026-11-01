@@ -78,6 +78,8 @@ ELEK_ELECTRUM_SERVERS = ("electrs.elektron-net.org:50002",
                          "electrs2.elektron-net.org:50002")
 BTC_ELECTRUM_SERVERS = ("btc.electrum1.cipig.net:10000",
                         "btc.electrum2.cipig.net:10000")
+TELEK_ELECTRUM_SERVERS = ("100.64.0.2:50002", "192.168.178.21:50002", "127.0.0.1:50005")
+TBTC_ELECTRUM_SERVERS = ("100.64.0.2:50002", "192.168.178.21:50002", "127.0.0.1:50005")
 
 # ETH mainnet enable extras: RPC twins of the SEPOLIA set (both alive with
 # eth_chainId "0x1", probed 2026-10-13) + the komodo mainnet swap contract,
@@ -89,9 +91,28 @@ ETH_MAINNET_RPC_URLS = [
     "https://eth.drpc.org",
 ]
 
-# Coins tradeable in the app's MAINNET market (the #91 mandate: btc, eth,
-# elek on the #73 branch split).
+# Coins tradeable in the app's MAINNET and TESTNET markets (#73 branch split + dual mode).
 MAINNET_COINS = ("ELEK", "BTC", "ETH")
+TESTNET_COINS = ("tELEK", "tBTC", "SEPOLIAETH")
+
+MAINNET_PAIRS = (("ELEK", "BTC"), ("ELEK", "ETH"), ("BTC", "ETH"))
+TESTNET_PAIRS = (("tELEK", "tBTC"), ("tELEK", "SEPOLIAETH"), ("tBTC", "SEPOLIAETH"))
+
+
+def is_testnet() -> bool:
+    try:
+        from electrum import constants
+        return bool(constants.net.TESTNET)
+    except Exception:
+        return False
+
+
+def tradeable_coins() -> tuple:
+    return TESTNET_COINS if is_testnet() else MAINNET_COINS
+
+
+def builtin_pairs() -> tuple:
+    return TESTNET_PAIRS if is_testnet() else MAINNET_PAIRS
 
 
 def eth_mainnet_enable_params() -> dict:
@@ -102,15 +123,21 @@ def eth_mainnet_enable_params() -> dict:
 
 
 def electrum_servers(ticker: str) -> list:
-    """Legacy `electrum` activation servers for a mainnet UTXO ticker
-    (#73): [{url, protocol}]; ETH has none (eth.rs activates by urls)."""
-    urls = {"ELEK": ELEK_ELECTRUM_SERVERS,
-            "BTC": BTC_ELECTRUM_SERVERS}.get(ticker.upper()) or ()
+    """Legacy `electrum` activation servers for a UTXO ticker
+    (mainnet or testnet): [{url, protocol}]; ETH has none (eth.rs activates by urls)."""
+    t = ticker.upper()
+    if t == "ELEK":
+        urls = ELEK_ELECTRUM_SERVERS
+    elif t == "BTC":
+        urls = BTC_ELECTRUM_SERVERS
+    elif t == "TELEK":
+        urls = TELEK_ELECTRUM_SERVERS
+    elif t == "TBTC":
+        urls = TBTC_ELECTRUM_SERVERS
+    else:
+        urls = ()
     return [{"url": u, "protocol": "TCP"} for u in urls]
 
-
-# #101: the app's tradeable coins are MAINNET_COINS above (the #91 mandate:
-# btc, eth, elek); this mainnet branch carries no testnet coin list.
 
 # #93 Lightning: the -lightning coin entries never live in the coin
 # registries (coins/upstream_coins + coins/elektron_coins carry none) -
@@ -129,7 +156,11 @@ LN_DECIMALS = 11  # msat precision, mirrors the fixture
 LN_CONFIRMATION_TARGETS = {"background": 6, "normal": 2, "high_priority": 1}
 # UTXO segwit platforms with a Lightning counterpart in this app.
 # ETH is EVM - there is no L2 for it, its legs stay on-chain HTLC.
-LN_SUPPORTED = ("ELEK", "BTC")
+LN_SUPPORTED = ("ELEK", "BTC", "tELEK", "tBTC")
+
+
+def ln_supported() -> tuple:
+    return ("tELEK", "tBTC") if is_testnet() else ("ELEK", "BTC")
 
 
 def lightning_ticker(coin: str) -> str:
@@ -137,10 +168,12 @@ def lightning_ticker(coin: str) -> str:
     return coin + LN_TICKER_SUFFIX
 
 
-def lightning_coin_conf(coin: str, network: str = "mainnet") -> dict:
+def lightning_coin_conf(coin: str, network: str = None) -> dict:
     """One canonical -lightning coin entry (fixture form above). The
     platform coin must already carry the LN prerequisites: segwit
     address_format + avg_blocktime (both sit in the app template)."""
+    if network is None:
+        network = "testnet" if (coin.startswith("t") or is_testnet()) else "mainnet"
     return {
         "coin": lightning_ticker(coin),
         "mm2": 1,
@@ -339,6 +372,51 @@ def rates_from_book(book: dict) -> dict:
             "pair": book.get("pair") or ""}
 
 
+ELEK_FAMILY = ("ELEK", "TELEK", "RELEK")
+BTC_FAMILY = ("BTC", "TBTC", "RBTC")
+
+
+def default_price_for(rates: dict | None, base: str, rel: str) -> str:
+    """Default price recommendation for pair base/rel (§13 / fx.mjs parity):
+    1. If rates has a valid mid for this pair, return that mid.
+    2. If rates has usd and usd_per_btc and rel is in BTC_FAMILY:
+       mid = usd / usd_per_btc (formatted up to 8 decimals).
+    3. Otherwise return '' (no fabricated price)."""
+    if not isinstance(rates, dict) or not base or not rel:
+        return ""
+    # 1. Exact pair mid from live book
+    pair_tag = f"{base}/{rel}".upper()
+    r_pair = str(rates.get("pair") or "").upper()
+    if r_pair and r_pair == pair_tag:
+        if rates.get("mid"):
+            try:
+                return dec_str(Decimal(str(rates["mid"])))
+            except Exception:
+                pass
+    elif rates.get("mid") and not r_pair:
+        try:
+            return dec_str(Decimal(str(rates["mid"])))
+        except Exception:
+            pass
+
+    # 2. Reference estimate: usd / usd_per_btc for ELEK/BTC family
+    if base.upper() in ELEK_FAMILY and rel.upper() in BTC_FAMILY:
+        usd = rates.get("usd")
+        usd_per_btc = rates.get("usd_per_btc")
+        if usd is not None and usd_per_btc is not None:
+            try:
+                d_usd = Decimal(str(usd))
+                d_btc = Decimal(str(usd_per_btc))
+                if d_usd > 0 and d_btc > 0:
+                    with localcontext() as ctx:
+                        ctx.prec = 8
+                        res = format((d_usd / d_btc).normalize(), "f")
+                        return res or "0"
+            except Exception:
+                pass
+    return ""
+
+
 class KdfClient:
     """Client for the user's OWN client-kdf instance (M2 no-custody: the
     wallet process that holds the user's coins and runs the swaps).
@@ -433,7 +511,7 @@ class KdfClient:
                 "price": str(o.get("price", "")),
                 "volume": str(o.get("max_base_vol", "")),
                 "available": str(o.get("available_amount", "")),
-                "cancellable": bool(o.get("cancellable", False)),
+                "cancellable": bool(o.get("cancellable", True)),
                 "created_at": int(o.get("created_at", 0) or 0),
             })
         # newest first - the app shows fresh orders on top

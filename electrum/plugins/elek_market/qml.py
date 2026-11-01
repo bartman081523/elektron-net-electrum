@@ -16,10 +16,11 @@ from electrum.gui.common_qt.plugins import PluginQObject
 
 from . import Plugin as ElekMarketBase
 from . import kdf_runtime
-from .market_api import (KdfClient, MAINNET_COINS, MarketApi, MarketApiError,
-                         dec_div, dec_mul, electrum_servers, rates_from_book,
-                         lightning_ticker, LN_SUPPORTED,
-                         eth_mainnet_enable_params, sepolia_enable_params)
+from .market_api import (KdfClient, MAINNET_COINS, TESTNET_COINS, MarketApi, MarketApiError,
+                         dec_div, dec_mul, dec_str, default_price_for, electrum_servers,
+                         rates_from_book, lightning_ticker, LN_SUPPORTED,
+                         eth_mainnet_enable_params, sepolia_enable_params,
+                         tradeable_coins, builtin_pairs, ln_supported, is_testnet)
 
 
 def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
@@ -222,43 +223,86 @@ class QMarketSignalObject(PluginQObject):
     def endpoint(self, value):
         self.plugin.set_endpoint(value)
 
+    @pyqtProperty(str)
+    def pairBase(self):
+        return self.plugin.pair[0]
+
+    @pyqtProperty(str)
+    def pairRel(self):
+        return self.plugin.pair[1]
+
     @pyqtSlot()
     def refresh_rates(self):
         """#96 truth source: the user's own kdf book mid (rates_from_book,
-        snapshot source 'local-kdf'). The Render REST /fx/rates.json only
-        answers when the diagnostic flag is set; without either source the
-        error signal explains why no rate exists."""
+        snapshot source 'local-kdf'). If the book is empty, falls back to the
+        network rates snapshot (electrs blockchain.fx.rates RPC or elek-web/Render
+        /fx/rates.json), deriving mid from usd/usd_per_btc for BTC pairs (§13)."""
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
-        kdf_err = None
+        loop = get_asyncio_loop()
+        base, rel = self.plugin.pair
         kdf = self._resolved_kdf()
         if kdf is not None:
             fut = _asyncio.run_coroutine_threadsafe(
-                kdf.orderbook(*self.plugin.pair), get_asyncio_loop())
+                kdf.orderbook(base, rel), loop)
             try:
                 self._rates = rates_from_book(
-                    MarketApi.parse_orderbook(fut.result(timeout=30)))
+                    MarketApi.parse_orderbook(fut.result(timeout=15)))
                 self.ratesReady.emit()
                 return
-            except Exception as e:
-                kdf_err = str(e)
-        if not self.plugin.diagnostic_rest:
-            self.error.emit(kdf_err or
-                            'no kdf available (embedded runtime phase: %s) '
-                            '- REST diagnostic disabled'
-                            % self._kdf_rt.phase)
-            return
-        api = self.plugin.get_api()
-        fut = _asyncio.run_coroutine_threadsafe(api.get_rates_raw(), get_asyncio_loop())
+            except Exception:
+                pass  # Book empty or unquoted; fall back to reference rate
+
+        # Fallback 1: Connected Electrum network daemon (blockchain.fx.rates)
         try:
-            self._rates = fut.result(timeout=30)
-            self.ratesReady.emit()
+            from electrum.network import Network
+            net = Network.get_instance()
+            if net is not None and net.is_connected() and net.interface and net.interface.session:
+                fut = _asyncio.run_coroutine_threadsafe(
+                    net.interface.session.send_request('blockchain.fx.rates', [], timeout=10),
+                    loop)
+                reply = fut.result(timeout=10)
+                if isinstance(reply, dict) and (reply.get("usd") or reply.get("eur")):
+                    snap = dict(reply)
+                    if "mid" not in snap or not snap["mid"]:
+                        est = default_price_for(snap, base, rel)
+                        if est:
+                            snap["mid"] = est
+                    snap["pair"] = f"{base}/{rel}"
+                    self._rates = snap
+                    self.ratesReady.emit()
+                    return
+        except Exception:
+            pass
+
+        # Fallback 2: REST endpoint /fx/rates.json
+        try:
+            api = self.plugin.get_api()
+            fut = _asyncio.run_coroutine_threadsafe(api.get_rates_raw(), loop)
+            snap = fut.result(timeout=15)
+            if isinstance(snap, dict) and (snap.get("usd") or snap.get("eur")):
+                snap_dict = dict(snap)
+                if "mid" not in snap_dict or not snap_dict["mid"]:
+                    est = default_price_for(snap_dict, base, rel)
+                    if est:
+                        snap_dict["mid"] = est
+                snap_dict["pair"] = f"{base}/{rel}"
+                self._rates = snap_dict
+                self.ratesReady.emit()
+                return
         except Exception as e:
-            self.error.emit(str(e))
+            if not self._rates:
+                self.error.emit(str(e))
 
     @pyqtProperty('QVariant')
     def rates(self):
         return self._rates
+
+    @pyqtProperty(str, notify=ratesReady)
+    def defaultPrice(self):
+        """Recommended price string (mid or derived estimate) for current pair."""
+        base, rel = self.plugin.pair
+        return default_price_for(self._rates, base, rel)
 
     @pyqtSlot(str, str)
     def refresh_orderbook(self, base: str, rel: str):
@@ -618,7 +662,11 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtProperty('QVariantList')
     def coins(self):
-        return list(MAINNET_COINS)
+        return list(tradeable_coins())
+
+    @pyqtProperty('QVariantList')
+    def availablePairs(self):
+        return [{"p": f"{b} / {r}", "b": b, "r": r} for b, r in builtin_pairs()]
 
     @pyqtProperty('QVariant')
     def enabledCoins(self):
@@ -628,12 +676,12 @@ class QMarketSignalObject(PluginQObject):
     def balances(self):
         return self._balances
 
-    # ---- #93 lightning counterparts (ELEK/BTC; ETH is EVM) ----
+    # ---- #93 lightning counterparts ----
 
     @pyqtProperty('QVariantList')
     def lnCoins(self):
         """The platform coins that get a Lightning counterpart."""
-        return list(LN_SUPPORTED)
+        return list(ln_supported())
 
     @pyqtProperty('QVariant', notify=lnStateReady)
     def lnState(self):
@@ -661,13 +709,19 @@ class QMarketSignalObject(PluginQObject):
             self.refresh_balances()
         except Exception as e:
             self.error.emit(str(e))
+
+        # Auto-enable: if no coins are enabled on a ready runtime, trigger enablement
+        if self._kdf_rt.phase == kdf_runtime.PHASE_READY and not self._enabled:
+            for c in tradeable_coins():
+                self.enable_coin(c)
+
         # #93 self-heal: platform coins whose Lightning counterpart is not
         # enabled yet are activated in the background (once per session per
         # coin). Only the embedded runtime qualifies - it owns the boot conf
         # and injects the -lightning entries (_ensure_lightning_coins); an
         # external swap_endpoint kdf must carry its own conf entries.
         if self._kdf_rt.phase == kdf_runtime.PHASE_READY:
-            for ln_coin in LN_SUPPORTED:
+            for ln_coin in ln_supported():
                 if (ln_coin not in self._enabled
                         or lightning_ticker(ln_coin) in self._enabled
                         or ln_coin in self._ln_tried):
@@ -677,17 +731,15 @@ class QMarketSignalObject(PluginQObject):
 
     @pyqtSlot(str)
     def enable_coin(self, coin: str):
-        """Enable one coin on the client-kdf (#73 mainnet): UTXO coins are
-        electrum-only here (the app ships no native RPC node) -> legacy
-        `electrum` method with a servers array; ETH uses legacy `enable`
-        with urls + swap_contract_address (EIP-55 casing mandatory). The
-        SEPOLIAETH branch stays for cross-branch template parity."""
+        """Enable one coin on the client-kdf: UTXO coins are
+        electrum-only here -> legacy `electrum` method with servers array;
+        ETH uses legacy `enable` with urls + swap_contract_address."""
         if not self.swapConfigured:
             self.error.emit('swap_endpoint not configured')
             return
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
-        if coin in ('ELEK', 'BTC'):
+        if coin in ('ELEK', 'BTC', 'tELEK', 'tBTC'):
             coro = self._get_kdf_cfg().enable_electrum(
                 coin, electrum_servers(coin))
         else:
@@ -712,14 +764,15 @@ class QMarketSignalObject(PluginQObject):
         except Exception as e:
             self.error.emit(str(e))
 
-    # ---- #93 lightning activation (task::enable_lightning on kdf) ----
-
     def _maybe_activate_lightning(self, coin: str):
         """Post-enable follow-up: fire the LN activation for a supported
-        platform coin once per session (None/'' = not attempted yet;
-        'error: ...' is retried when the user re-enables the coin)."""
-        if coin not in LN_SUPPORTED:
+        platform coin once per session."""
+        if coin not in ln_supported():
             return
+        state = self._ln_state.get(coin)
+        if state is None or state == '' or state.startswith('error:'):
+            self._ln_tried.add(coin)
+            self.enable_lightning(coin)
         state = self._ln_state.get(coin)
         if state is None or state == '' or state.startswith('error:'):
             self._ln_tried.add(coin)
