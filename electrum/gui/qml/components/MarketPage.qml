@@ -17,9 +17,9 @@ ElDialog {
     title: qsTr('Elektron Market')
 
     // view-frame convention: pairs sit with the ELEK-ish coin as base
-    // (ELEK/BTC default; BTC/ETH is the only pair without an ELEK base)
-    property string pairBase: 'ELEK'
-    property string pairRel: 'BTC'
+    // Dynamically initialized from MarketPlugin pair and coins
+    property string pairBase: (MarketPlugin && MarketPlugin.pairBase) ? MarketPlugin.pairBase : 'tELEK'
+    property string pairRel: (MarketPlugin && MarketPlugin.pairRel) ? MarketPlugin.pairRel : 'tBTC'
     // best book prices in view terms (rel per base); restored on every book
     // refresh since the book order is not guaranteed sorted (asks arrived
     // 4.2/3.5/2.0 in the #83 federation mesh)
@@ -29,7 +29,7 @@ ElDialog {
     // so handlers re-assign these on the ready signals)
     property var balances: ({})
     property var enabledList: []
-    property var coins: ['ELEK', 'BTC', 'ETH']
+    property var coins: (MarketPlugin && MarketPlugin.coins) ? MarketPlugin.coins : ['tELEK', 'tBTC', 'SEPOLIAETH']
     // #92 fulfill-dialog state
     property string fSide: 'ask'
     property string fPrice: ''
@@ -98,31 +98,26 @@ ElDialog {
         root.balances = MarketPlugin.balances || {}
     }
 
-    // #97: seed the network settings fields from the plugin state exactly
-    // once at page load - refreshAll must never clobber the user's typing.
-    function nsDefaults() {
-        if (MarketPlugin == null || MarketPlugin == undefined) return
-        nsSeed.text = String(MarketPlugin.netSeednode || '')
-        var cs = MarketPlugin.netCoinServers || {}
-        nsTelek.text = String(cs.ELEK || '')
-        nsTbtc.text = String(cs.BTC || '')
-        nsSep.text = String(cs.ETH || '')
-    }
-
     Connections {
         target: MarketPlugin
         function onRatesReady() {
             var r = MarketPlugin.rates
             if (r === null || r === undefined) return
-            // #96 two snapshot shapes: the REST diagnostic snapshot carries
-            // usd/eur; the local-kdf book snapshot carries mid (the book mid
-            // IS the market rate). Neither present -> say so honestly.
-            if (r.usd !== undefined && r.usd !== null && r.eur !== undefined) {
-                rateLabel.text = qsTr('1 %1 ≈ %2 USD / %3 EUR (source: %4)').arg(root.pairBase).arg(r.usd).arg(r.eur).arg(r.source)
-            } else if (r.mid !== undefined && r.mid !== null) {
-                rateLabel.text = qsTr('Buch-Mid: %1 %2 je %3 (source: %4)').arg(r.mid).arg(root.pairRel).arg(root.pairBase).arg(r.source)
+            var pBase = root.pairBase
+            var pRel = root.pairRel
+            if (r.mid !== undefined && r.mid !== null && r.mid !== '') {
+                if (r.usd !== undefined && r.usd !== null && r.eur !== undefined && r.eur !== null) {
+                    rateLabel.text = qsTr('1 %1 ≈ %2 %3 (≈ %4 USD / %5 EUR) (source: %6)').arg(pBase).arg(r.mid).arg(pRel).arg(r.usd).arg(r.eur).arg(r.source || 'market')
+                } else {
+                    rateLabel.text = qsTr('Buch-Mid: %1 %2 je %3 (source: %4)').arg(r.mid).arg(pRel).arg(pBase).arg(r.source || 'market')
+                }
+            } else if (r.usd !== undefined && r.usd !== null && r.eur !== undefined) {
+                rateLabel.text = qsTr('1 %1 ≈ %2 USD / %3 EUR (source: %4)').arg(pBase).arg(r.usd).arg(r.eur).arg(r.source || 'registry')
             } else {
-                rateLabel.text = qsTr('Kein Kurs - Buch ohne Quote-Seite (source: %1)').arg(r.source || '-')
+                rateLabel.text = qsTr('Kein Kurs verfuegbar (source: %1)').arg(r.source || '-')
+            }
+            if (mkPrice.text === '' && MarketPlugin && MarketPlugin.defaultPrice) {
+                mkPrice.text = MarketPlugin.defaultPrice
             }
         }
         function onEnabledReady() {
@@ -155,21 +150,30 @@ ElDialog {
                 root.bestAsk = ''
                 root.bestBid = ''
                 bookModel.clear()
+                var myPrices = {}
+                for (var m = 0; m < myOrdersModel.count; ++m) {
+                    var myItem = myOrdersModel.get(m)
+                    if (myItem && myItem.price) myPrices[myItem.price] = true
+                }
                 var asks = ob.asks || [], bids = ob.bids || []
                 var bestA = null, bestB = null
                 for (var i = 0; i < asks.length; ++i) {
                     var ap = parseFloat(asks[i].price)
                     if (bestA === null || ap < bestA) bestA = ap
+                    var pStr = String(asks[i].price)
                     bookModel.append({ side: qsTr('Ask'), kind: 'ask',
-                                       price: String(asks[i].price),
-                                       volume: String(asks[i].max_volume) })
+                                       price: pStr,
+                                       volume: String(asks[i].max_volume),
+                                       isMine: !!myPrices[pStr] })
                 }
                 for (var j = 0; j < bids.length; ++j) {
                     var bp = parseFloat(bids[j].price)
                     if (bestB === null || bp > bestB) bestB = bp
+                    var bpStr = String(bids[j].price)
                     bookModel.append({ side: qsTr('Bid'), kind: 'bid',
-                                       price: String(bids[j].price),
-                                       volume: String(bids[j].max_volume) })
+                                       price: bpStr,
+                                       volume: String(bids[j].max_volume),
+                                       isMine: !!myPrices[bpStr] })
                 }
                 root.bestAsk = bestA !== null ? String(bestA) : ''
                 root.bestBid = bestB !== null ? String(bestB) : ''
@@ -192,6 +196,8 @@ ElDialog {
                 })
             }
             emptyOrdersLabel.visible = arr.length === 0
+            if (MarketPlugin && MarketPlugin.orderbook)
+                onOrderbookReady()
         }
         function onMakerOrderReady() {
             var m = MarketPlugin.lastMakerOrder
@@ -263,21 +269,28 @@ ElDialog {
                     id: pairSelector
                     Layout.fillWidth: true
                     textRole: 'p'
-                    model: ListModel {
-                        ListElement { p: 'ELEK / BTC'; b: 'ELEK'; r: 'BTC' }
-                        ListElement { p: 'ELEK / ETH'; b: 'ELEK'; r: 'ETH' }
-                        ListElement { p: 'BTC / ETH'; b: 'BTC'; r: 'ETH' }
-                    }
+                    model: (MarketPlugin && MarketPlugin.availablePairs && MarketPlugin.availablePairs.length > 0)
+                           ? MarketPlugin.availablePairs
+                           : [
+                               { p: 'tELEK / tBTC', b: 'tELEK', r: 'tBTC' },
+                               { p: 'tELEK / SEPOLIAETH', b: 'tELEK', r: 'SEPOLIAETH' },
+                               { p: 'tBTC / SEPOLIAETH', b: 'tBTC', r: 'SEPOLIAETH' }
+                           ]
                     onActivated: function (index) {
-                        var b = model.get(index).b
-                        var r = model.get(index).r
+                        var item = model[index] || (model.get ? model.get(index) : null)
+                        if (!item) return
+                        var b = item.b
+                        var r = item.r
                         if (b === root.pairBase && r === root.pairRel) return
                         root.pairBase = b
                         root.pairRel = r
                         root.bestAsk = ''
                         root.bestBid = ''
-                        if (MarketPlugin !== null && MarketPlugin !== undefined)
+                        mkPrice.text = ''
+                        if (MarketPlugin !== null && MarketPlugin !== undefined) {
                             MarketPlugin.refresh_orderbook(b, r)
+                            MarketPlugin.refresh_rates()
+                        }
                     }
                 }
                 Label {
@@ -414,7 +427,13 @@ ElDialog {
                     delegate: ItemDelegate {
                         width: bookList.width
                         height: 34
-                        onClicked: root.openFulfill(model.kind, model.price, model.volume)
+                        onClicked: {
+                            if (model.isMine) {
+                                statusLabel.text = qsTr('Das ist deine eigene Order. Bitte unten in "Meine offenen Orders" verwalten/stornieren.')
+                                return
+                            }
+                            root.openFulfill(model.kind, model.price, model.volume)
+                        }
                         contentItem: RowLayout {
                             spacing: 10
                             Rectangle {
@@ -424,6 +443,12 @@ ElDialog {
                             Label { text: model.side; font.pixelSize: 12;
                                     color: model.side === qsTr('Ask') ? 'red' : 'green' }
                             Label { text: model.price; font.pixelSize: 14 }
+                            Label {
+                                text: qsTr('(Deine Order)')
+                                font.pixelSize: 11
+                                color: constants.mutedForeground
+                                visible: !!model.isMine
+                            }
                             Label { text: model.volume; font.pixelSize: 14; Layout.alignment: Qt.AlignRight }
                         }
                     }
@@ -436,12 +461,23 @@ ElDialog {
                     TextField {
                         id: mkPrice
                         Layout.fillWidth: true
-                        placeholderText: qsTr('Preis, z.B. 2.5')
+                        placeholderText: (MarketPlugin && MarketPlugin.defaultPrice)
+                                         ? qsTr('Richtwert: %1').arg(MarketPlugin.defaultPrice)
+                                         : qsTr('Preis, z.B. 0.00000321')
+                    }
+                    FlatButton {
+                        text: qsTr('Richtwert')
+                        font.pixelSize: 11
+                        visible: (MarketPlugin && MarketPlugin.defaultPrice) ? true : false
+                        onClicked: {
+                            if (MarketPlugin && MarketPlugin.defaultPrice)
+                                mkPrice.text = MarketPlugin.defaultPrice
+                        }
                     }
                     TextField {
                         id: mkVolume
                         Layout.fillWidth: true
-                        placeholderText: qsTr('Menge %1, z.B. 0.1').arg(root.pairBase)
+                        placeholderText: qsTr('Menge %1, z.B. 100').arg(root.pairBase)
                     }
                     ComboBox {
                         id: mkSide
@@ -577,70 +613,6 @@ ElDialog {
                     text: ''
                 }
 
-                // #97 market network settings: seednode + per-coin servers
-                // for the embedded runtime. A save only persists - the kdf
-                // must not be killed mid-swap; the restart is its own button.
-                Heading { text: qsTr('Netzwerk') }
-                Label {
-                    Layout.fillWidth: true
-                    font.pixelSize: 11
-                    color: constants.mutedForeground
-                    wrapMode: Text.WrapAnywhere
-                    text: qsTr('Seednode der Market-Federation und Server je Coin (leer = eingebaute Standard-Server). Wirksam nach Runtime-Neustart.')
-                }
-                TextField {
-                    id: nsSeed
-                    Layout.fillWidth: true
-                    placeholderText: qsTr('Seednode, z.B. wss://elektron-market.onrender.com')
-                }
-                TextField {
-                    id: nsTelek
-                    Layout.fillWidth: true
-                    placeholderText: qsTr('ELEK-Server (leer = Standard)')
-                }
-                TextField {
-                    id: nsTbtc
-                    Layout.fillWidth: true
-                    placeholderText: qsTr('BTC-Server (leer = Standard)')
-                }
-                TextField {
-                    id: nsSep
-                    Layout.fillWidth: true
-                    placeholderText: qsTr('ETH-RPC (leer = Standard)')
-                }
-                Label {
-                    id: netHint
-                    Layout.fillWidth: true
-                    font.pixelSize: 11
-                    wrapMode: Text.WrapAnywhere
-                    color: constants.mutedForeground
-                    text: ''
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    FlatButton {
-                        Layout.fillWidth: true
-                        text: qsTr('Speichern')
-                        onClicked: {
-                            if (MarketPlugin == null || MarketPlugin == undefined) { netHint.text = qsTr('plugin missing'); return }
-                            MarketPlugin.save_net_settings(nsSeed.text.trim(), {
-                                ELEK: nsTelek.text.trim(),
-                                BTC: nsTbtc.text.trim(),
-                                ETH: nsSep.text.trim()
-                            })
-                            netHint.text = qsTr('Gespeichert - wirksam bei Runtime-Neustart')
-                        }
-                    }
-                    FlatButton {
-                        Layout.fillWidth: true
-                        text: qsTr('Runtime neu starten')
-                        onClicked: {
-                            if (MarketPlugin == null || MarketPlugin == undefined) { netHint.text = qsTr('plugin missing'); return }
-                            netHint.text = qsTr('Runtime startet neu ...')
-                            MarketPlugin.restart_runtime()
-                        }
-                    }
-                }
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -779,7 +751,6 @@ ElDialog {
     Component.onCompleted: {
         if (MarketPlugin !== null && MarketPlugin !== undefined && MarketPlugin.coins)
             root.coins = MarketPlugin.coins
-        nsDefaults()
         refreshAll()
     }
 }

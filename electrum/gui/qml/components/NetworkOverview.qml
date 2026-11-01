@@ -274,6 +274,29 @@ Pane {
                     }
                 }
 
+                Heading {
+                    Layout.columnSpan: 2
+                    text: qsTr('Market P2P')
+                }
+
+                Label {
+                    text: qsTr('Seednode') + ':'
+                    color: Material.accentColor
+                }
+                Label {
+                    text: (MarketPlugin && MarketPlugin.netSeednode) ? MarketPlugin.netSeednode : 'wss://elektron-market.onrender.com'
+                    wrapMode: Text.WrapAnywhere
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: qsTr('P2P Status') + ':'
+                    color: Material.accentColor
+                }
+                Label {
+                    text: MarketPlugin ? MarketPlugin.kdfPhase : qsTr('nicht geladen')
+                }
+
             }
 
         }
@@ -312,6 +335,16 @@ Pane {
                     dialog.open()
                 }
             }
+            FlatButton {
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                text: qsTr('Market Settings');
+                icon.source: '../../icons/tab_coins.png'
+                onClicked: {
+                    var dialog = marketConfig.createObject(root)
+                    dialog.open()
+                }
+            }
         }
     }
     property color navigationBarBackgroundColor: constants.highlightBackground
@@ -333,6 +366,13 @@ Pane {
     Component {
         id: nostrConfig
         NostrConfigDialog {
+            onClosed: destroy()
+        }
+    }
+
+    Component {
+        id: marketConfig
+        MarketConfigDialog {
             onClosed: destroy()
         }
     }
