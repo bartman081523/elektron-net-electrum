@@ -401,3 +401,27 @@ class QEConfig(AuthMixin, QObject):
     @pyqtSlot('quint64', result=float)
     def satsToUnits(self, satoshis):
         return satoshis / pow(10, self.config.BTC_AMOUNTS_DECIMAL_POINT)
+
+    networkChanged = pyqtSignal()
+
+    @pyqtProperty(bool, notify=networkChanged)
+    def isTestnet(self) -> bool:
+        from electrum import constants
+        return bool(constants.net.TESTNET)
+
+    @pyqtProperty(str, notify=networkChanged)
+    def networkName(self) -> str:
+        from electrum import constants
+        return constants.net.NET_NAME
+
+    @pyqtSlot(bool)
+    def setNetwork(self, testnet: bool) -> None:
+        from electrum import constants
+        target_net = constants.BitcoinTestnet if testnet else constants.BitcoinMainnet
+        if constants.net == target_net:
+            return
+        target_net.set_as_network()
+        self.config.set_key('testnet', bool(testnet))
+        constants.AbstractNet._cached_default_servers = None
+        self._logger.info(f"Switched network to {target_net.NET_NAME} (testnet={testnet})")
+        self.networkChanged.emit()

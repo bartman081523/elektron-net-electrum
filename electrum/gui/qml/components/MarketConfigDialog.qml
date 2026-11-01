@@ -42,54 +42,54 @@ ElDialog {
                 InfoTextArea {
                     Layout.fillWidth: true
                     compact: true
-                    text: qsTr('Seednode der P2P-Market-Federation und optionale Server je Coin (leer = Standard-Server). Gespeicherte Änderungen werden nach Neustart der Runtime wirksam.')
+                    text: qsTr('Seed node of the P2P market federation and optional servers per coin. Saved changes take effect after runtime restart.')
                     backgroundColor: constants.darkerDialogBackground
                 }
 
                 Label {
-                    text: qsTr('KDF Runtime Status: %1').arg(MarketPlugin ? MarketPlugin.kdfPhase : qsTr('nicht geladen'))
+                    text: qsTr('KDF Runtime Status: %1').arg(MarketPlugin ? MarketPlugin.kdfPhase : qsTr('not loaded'))
                     color: Material.accentColor
                     font.bold: true
                 }
 
                 Label {
-                    text: qsTr('Seednode:')
+                    text: qsTr('Seed Node:')
                 }
 
                 TextField {
                     id: nsSeed
                     Layout.fillWidth: true
-                    placeholderText: qsTr('z.B. wss://elektron-market.onrender.com')
+                    placeholderText: qsTr('e.g. wss://elektron-market.onrender.com')
                 }
 
                 Label {
-                    text: qsTr('%1 Server:').arg((MarketPlugin && MarketPlugin.coins && MarketPlugin.coins[0]) ? MarketPlugin.coins[0] : 'ELEK')
+                    text: qsTr('%1 Electrum Servers:').arg((MarketPlugin && MarketPlugin.coins && MarketPlugin.coins[0]) ? MarketPlugin.coins[0] : 'ELEK')
                 }
 
                 TextField {
                     id: nsTelek
                     Layout.fillWidth: true
-                    placeholderText: qsTr('z.B. 100.64.0.2:50002 (leer = Standard)')
+                    placeholderText: qsTr('e.g. electrs.elektron-net.org:50002')
                 }
 
                 Label {
-                    text: qsTr('%1 Server:').arg((MarketPlugin && MarketPlugin.coins && MarketPlugin.coins[1]) ? MarketPlugin.coins[1] : 'BTC')
+                    text: qsTr('%1 Electrum Servers:').arg((MarketPlugin && MarketPlugin.coins && MarketPlugin.coins[1]) ? MarketPlugin.coins[1] : 'BTC')
                 }
 
                 TextField {
                     id: nsTbtc
                     Layout.fillWidth: true
-                    placeholderText: qsTr('z.B. 100.64.0.2:50002 (leer = Standard)')
+                    placeholderText: qsTr('e.g. btc.electrum1.cipig.net:10000')
                 }
 
                 Label {
-                    text: qsTr('%1 RPC:').arg((MarketPlugin && MarketPlugin.coins && MarketPlugin.coins[2]) ? MarketPlugin.coins[2] : 'ETH')
+                    text: qsTr('%1 RPC Nodes:').arg((MarketPlugin && MarketPlugin.coins && MarketPlugin.coins[2]) ? MarketPlugin.coins[2] : 'ETH')
                 }
 
                 TextField {
                     id: nsSep
                     Layout.fillWidth: true
-                    placeholderText: qsTr('z.B. https://ethereum-sepolia-rpc.publicnode.com (leer = Standard)')
+                    placeholderText: qsTr('e.g. https://ethereum-rpc.publicnode.com')
                 }
 
                 Label {
@@ -107,11 +107,11 @@ ElDialog {
 
                     FlatButton {
                         Layout.fillWidth: true
-                        text: qsTr('Speichern')
+                        text: qsTr('Save')
                         icon.source: '../../icons/confirmed.png'
                         onClicked: {
                             if (MarketPlugin == null || MarketPlugin == undefined) {
-                                netHint.text = qsTr('Market-Plugin nicht verfügbar')
+                                netHint.text = qsTr('Market plugin not available')
                                 return
                             }
                             var c0 = (MarketPlugin.coins && MarketPlugin.coins[0]) ? MarketPlugin.coins[0] : 'ELEK'
@@ -122,20 +122,42 @@ ElDialog {
                             sMap[c1] = nsTbtc.text.trim()
                             sMap[c2] = nsSep.text.trim()
                             MarketPlugin.save_net_settings(nsSeed.text.trim(), sMap)
-                            netHint.text = qsTr('Gespeichert – wirksam nach Runtime-Neustart.')
+                            netHint.text = qsTr('Settings saved - effective after runtime restart.')
                         }
                     }
 
                     FlatButton {
                         Layout.fillWidth: true
-                        text: qsTr('Runtime neu starten')
+                        text: qsTr('Restore Defaults')
+                        icon.source: '../../icons/undo.png'
+                        onClicked: {
+                            if (MarketPlugin == null || MarketPlugin == undefined) {
+                                netHint.text = qsTr('Market plugin not available')
+                                return
+                            }
+                            MarketPlugin.reset_net_settings()
+                            nsSeed.text = String(MarketPlugin.defaultSeednode || 'wss://elektron-market.onrender.com')
+                            var defs = MarketPlugin.defaultCoinServers || {}
+                            var c0 = (MarketPlugin.coins && MarketPlugin.coins[0]) ? MarketPlugin.coins[0] : 'ELEK'
+                            var c1 = (MarketPlugin.coins && MarketPlugin.coins[1]) ? MarketPlugin.coins[1] : 'BTC'
+                            var c2 = (MarketPlugin.coins && MarketPlugin.coins[2]) ? MarketPlugin.coins[2] : 'ETH'
+                            nsTelek.text = String(defs[c0] || '')
+                            nsTbtc.text = String(defs[c1] || '')
+                            nsSep.text = String(defs[c2] || '')
+                            netHint.text = qsTr('Standardwerte wiederhergestellt. Klicken Sie auf Speichern.')
+                        }
+                    }
+
+                    FlatButton {
+                        Layout.fillWidth: true
+                        text: qsTr('Restart Runtime')
                         icon.source: '../../icons/refresh.png'
                         onClicked: {
                             if (MarketPlugin == null || MarketPlugin == undefined) {
-                                netHint.text = qsTr('Market-Plugin nicht verfügbar')
+                                netHint.text = qsTr('Market plugin not available')
                                 return
                             }
-                            netHint.text = qsTr('Runtime wird neu gestartet ...')
+                            netHint.text = qsTr('Runtime restarting...')
                             MarketPlugin.restart_runtime()
                         }
                     }
@@ -148,7 +170,7 @@ ElDialog {
 
             FlatButton {
                 Layout.fillWidth: true
-                text: qsTr('Schließen')
+                text: qsTr('Close')
                 icon.source: '../../icons/closebutton.png'
                 onClicked: rootItem.close()
             }
@@ -157,14 +179,19 @@ ElDialog {
 
     Component.onCompleted: {
         if (MarketPlugin != null && MarketPlugin != undefined) {
-            nsSeed.text = String(MarketPlugin.netSeednode || '')
+            var defSeed = String(MarketPlugin.defaultSeednode || 'wss://elektron-market.onrender.com')
+            var curSeed = String(MarketPlugin.netSeednode || '')
+            nsSeed.text = curSeed !== '' ? curSeed : defSeed
+
             var cs = MarketPlugin.netCoinServers || {}
+            var defs = MarketPlugin.defaultCoinServers || {}
             var c0 = (MarketPlugin.coins && MarketPlugin.coins[0]) ? MarketPlugin.coins[0] : 'ELEK'
             var c1 = (MarketPlugin.coins && MarketPlugin.coins[1]) ? MarketPlugin.coins[1] : 'BTC'
             var c2 = (MarketPlugin.coins && MarketPlugin.coins[2]) ? MarketPlugin.coins[2] : 'ETH'
-            nsTelek.text = String(cs[c0] || cs.ELEK || '')
-            nsTbtc.text = String(cs[c1] || cs.BTC || '')
-            nsSep.text = String(cs[c2] || cs.ETH || '')
+
+            nsTelek.text = String(cs[c0] || defs[c0] || '')
+            nsTbtc.text = String(cs[c1] || defs[c1] || '')
+            nsSep.text = String(cs[c2] || defs[c2] || '')
         }
     }
 }

@@ -203,6 +203,52 @@ def test_parse_my_orders_cancellable(ctx):
     return "PASS", "Maker orders correctly flagged cancellable=True", parsed
 
 
+def test_network_toggle_and_servers(ctx):
+    """Network switching updates constants.net and testnet servers.json resolves valid endpoints."""
+    # Testnet servers.json check
+    tn_servers = constants.BitcoinTestnet.DEFAULT_SERVERS
+    assert "100.64.0.2" in tn_servers or "192.168.178.21" in tn_servers or "127.0.0.1" in tn_servers, \
+        f"Missing valid testnet servers in testnet config: {list(tn_servers)}"
+    assert "electrs.elektron-net.org" not in tn_servers, \
+        "Mainnet electrs.elektron-net.org must NOT be in testnet servers.json"
+
+    # Test toggling to testnet
+    initial_net = constants.net
+    try:
+        constants.BitcoinTestnet.set_as_network()
+        assert constants.net.TESTNET is True
+        assert constants.net.NET_NAME == "testnet"
+        assert constants.net.SEGWIT_HRP == "tb"
+        assert constants.net.GENESIS == "00000078233832d6ba39d7693ad96e9e6a8bc869a5f49cfaf4760f2c73c73e4f"
+        assert market_api.is_testnet() is True
+
+        # Test toggling to mainnet
+        constants.BitcoinMainnet.set_as_network()
+        assert constants.net.TESTNET is False
+        assert constants.net.NET_NAME == "mainnet"
+        assert constants.net.SEGWIT_HRP == "be"
+        assert constants.net.GENESIS == "00000006b054338443f1a5d5534df21eab0d13232028158ae198edbb169f9dad"
+        assert market_api.is_testnet() is False
+    finally:
+        initial_net.set_as_network()
+
+    return "PASS", "Network toggles cleanly, testnet genesis & servers validated", {}
+
+
+def test_market_template_defaults(ctx):
+    """Standard/template defaults for seednode and coin electrum/RPC servers are complete."""
+    assert kdf_runtime.SEEDNODE.startswith("wss://")
+    for coin in ("ELEK", "BTC", "tELEK", "tBTC"):
+        servers = market_api.electrum_servers(coin)
+        assert len(servers) > 0, f"Missing default servers for {coin}"
+        for s in servers:
+            assert "url" in s and "protocol" in s
+
+    assert len(market_api.ETH_MAINNET_RPC_URLS) >= 2
+    assert len(market_api.SEPOLIA_RPC_URLS) >= 2
+    return "PASS", "All 6 coin default servers and seednode validated", {}
+
+
 TESTS = [
     test_tradeable_coins_and_pairs,
     test_electrum_servers_resolution,
@@ -210,6 +256,8 @@ TESTS = [
     test_server_overrides_parsing_and_encoding,
     test_base_conf_structure,
     test_parse_my_orders_cancellable,
+    test_network_toggle_and_servers,
+    test_market_template_defaults,
 ]
 
 

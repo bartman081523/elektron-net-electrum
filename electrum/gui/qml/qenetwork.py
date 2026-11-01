@@ -62,6 +62,7 @@ class QENetwork(QObject, QtEventListener):
         self.destroyed.connect(lambda: self.on_destroy())
 
         QEConfig.instance.useGossipChanged.connect(self.on_gossip_setting_changed)
+        QEConfig.instance.networkChanged.connect(self.dataChanged.emit)
 
     def on_destroy(self):
         self.unregister_callbacks()

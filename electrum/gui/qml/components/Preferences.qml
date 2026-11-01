@@ -42,6 +42,33 @@ Pane {
                     }
 
                     Label {
+                        text: qsTr('Network')
+                    }
+
+                    ElComboBox {
+                        id: networkSelect
+                        textRole: 'text'
+                        valueRole: 'value'
+                        model: [
+                            { 'text': qsTr('Elektron Mainnet'), 'value': false },
+                            { 'text': qsTr('Elektron Testnet'), 'value': true }
+                        ]
+                        Component.onCompleted: {
+                            currentIndex = Config.isTestnet ? 1 : 0
+                        }
+                        onCurrentValueChanged: {
+                            if (activeFocus && Config.isTestnet != currentValue) {
+                                Config.setNetwork(currentValue)
+                                var dialog = app.messageDialog.createObject(app, {
+                                    title: qsTr('Network Switched'),
+                                    text: qsTr('Please restart Electrum to activate the new network settings')
+                                })
+                                dialog.open()
+                            }
+                        }
+                    }
+
+                    Label {
                         text: qsTr('Language')
                     }
 

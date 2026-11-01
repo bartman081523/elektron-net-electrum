@@ -20,7 +20,8 @@ from .market_api import (KdfClient, MAINNET_COINS, TESTNET_COINS, MarketApi, Mar
                          dec_div, dec_mul, dec_str, default_price_for, electrum_servers,
                          rates_from_book, lightning_ticker, LN_SUPPORTED,
                          eth_mainnet_enable_params, sepolia_enable_params,
-                         tradeable_coins, builtin_pairs, ln_supported, is_testnet)
+                         tradeable_coins, builtin_pairs, ln_supported, is_testnet,
+                         SEPOLIA_RPC_URLS, ETH_MAINNET_RPC_URLS)
 
 
 def retry_crossing(book: dict | None, kind: str, price: float) -> bool:
@@ -848,6 +849,28 @@ class QMarketSignalObject(PluginQObject):
         fields (compact-string view of the parsed settings)."""
         overrides = self.plugin.coin_server_overrides()
         return {coin: ','.join(urls) for coin, urls in overrides.items()}
+
+    @pyqtProperty('QVariant')
+    def defaultSeednode(self):
+        """Template default seednode URL."""
+        return kdf_runtime.SEEDNODE
+
+    @pyqtProperty('QVariant')
+    def defaultCoinServers(self):
+        """Map of standard/template default servers per coin."""
+        return {
+            "ELEK": ",".join(kdf_runtime.ELEK_ELECTRUM_SERVERS),
+            "BTC": ",".join(kdf_runtime.BTC_ELECTRUM_SERVERS),
+            "ETH": ",".join(ETH_MAINNET_RPC_URLS),
+            "tELEK": ",".join(kdf_runtime.TELEK_ELECTRUM_SERVERS),
+            "tBTC": ",".join(kdf_runtime.TBTC_ELECTRUM_SERVERS),
+            "SEPOLIAETH": ",".join(SEPOLIA_RPC_URLS),
+        }
+
+    @pyqtSlot()
+    def reset_net_settings(self):
+        """Reset network settings to template defaults (empty overrides)."""
+        self.plugin.set_net_settings("", {})
 
     @pyqtSlot(str, 'QVariant')
     def save_net_settings(self, seednode: str, servers):

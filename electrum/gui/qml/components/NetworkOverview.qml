@@ -56,8 +56,40 @@ Pane {
                     text: qsTr('Network') + ':'
                     color: Material.accentColor
                 }
-                Label {
-                    text: Network.networkName
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: constants.paddingSmall
+                    Label {
+                        text: Network.networkName
+                        font.bold: true
+                    }
+                    Item { Layout.fillWidth: true }
+                    FlatButton {
+                        text: qsTr('Switch Network')
+                        icon.source: '../../icons/refresh.png'
+                        onClicked: {
+                            var targetIsTestnet = !Config.isTestnet
+                            var targetName = targetIsTestnet ? qsTr('Elektron Testnet') : qsTr('Elektron Mainnet')
+                            var dialog = app.messageDialog.createObject(app, {
+                                title: qsTr('Switch Network'),
+                                text: qsTr('Switch network to %1? Please restart the app after switching to connect to the new chain.').arg(targetName),
+                                yesno: true
+                            })
+                            dialog.accepted.connect(function() {
+                                Config.setNetwork(targetIsTestnet)
+                                var restartDialog = app.messageDialog.createObject(app, {
+                                    title: qsTr('Network Switched'),
+                                    text: qsTr('Network switched to %1. Restart app now?').arg(targetName),
+                                    yesno: true
+                                })
+                                restartDialog.accepted.connect(function() {
+                                    Qt.callLater(Qt.quit)
+                                })
+                                restartDialog.open()
+                            })
+                            dialog.open()
+                        }
+                    }
                 }
                 Label {
                     text: qsTr('Status') + ':'
