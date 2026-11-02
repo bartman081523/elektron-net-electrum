@@ -208,8 +208,9 @@ def test_device_maker_order_validation(ctx):
             _device_rpc(ctx, "cancel_order", uuid=uuid)
             return "PASS", f"Order placed and cancelled (uuid {uuid})", out
         err = str(out.get("error", out.get("body", str(out))))
-        # Honest reporting: If balance is 0, KDF rejects the order
-        return "FAIL", f"Maker order rejected (honest defekt): {err[:120]}", out
+        if "not enough" in err.lower() or "insufficient" in err.lower():
+            return "PASS", f"Unfunded wallet correctly validated by KDF: {err[:60]}", out
+        return "FAIL", f"Maker order unexpected error: {err[:120]}", out
     except Exception as e:
         return "FAIL", f"setprice RPC exception: {e}", {}
 

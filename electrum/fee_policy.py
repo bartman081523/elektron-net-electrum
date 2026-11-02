@@ -260,8 +260,8 @@ class FeePolicy(Logger):
             return self.value
         fee_per_kb = self.fee_per_kb(network)
         if fee_per_kb is None and self.use_dynamic_estimates:
-            if allow_fallback_to_static_rates:
-                fee_per_kb = FEERATE_FALLBACK_STATIC_FEE
+            if allow_fallback_to_static_rates or (network and not network.fee_estimates.has_data()):
+                fee_per_kb = FEERATE_DEFAULT_RELAY if (network and constants.net.TESTNET) else FEERATE_FALLBACK_STATIC_FEE
             else:
                 raise NoDynamicFeeEstimates()
 
