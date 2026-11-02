@@ -52,4 +52,22 @@ class Test_FeeHistogram(ElectrumTestCase):
         self.assertEqual(495000, mempool_fees.fee_to_depth(5.5))
         self.assertEqual(36495000, mempool_fees.fee_to_depth(0.5))
 
+    def test_fee_policy_testnet_fallback(self):
+        from unittest.mock import Mock
+        from electrum.fee_policy import FeePolicy, FEERATE_DEFAULT_RELAY
+        from electrum import constants
+
+        constants.BitcoinTestnet.set_as_network()
+        try:
+            policy = FeePolicy("eta:2")
+            mock_network = Mock()
+            mock_network.fee_estimates.has_data.return_value = False
+            mock_network.fee_estimates.eta_to_fee.return_value = None
+
+            fee = policy.estimate_fee(1000, network=mock_network)
+            self.assertEqual(FEERATE_DEFAULT_RELAY, fee)
+        finally:
+            constants.BitcoinMainnet.set_as_network()
+
+
 

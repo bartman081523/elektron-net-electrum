@@ -236,8 +236,9 @@ class BitcoinTestnet(AbstractNet):
     ADDRTYPE_P2SH = 196
     SEGWIT_HRP = "tb"
     BOLT11_HRP = SEGWIT_HRP
-    GENESIS = "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
-    DEFAULT_PORTS = {'t': '51001', 's': '51002'}
+    # Elektron Net testnet genesis (the "elektron testnet" chain)
+    GENESIS = "00000078233832d6ba39d7693ad96e9e6a8bc869a5f49cfaf4760f2c73c73e4f"
+    DEFAULT_PORTS = {'t': '50005', 's': '50002'}
 
     XPRV_HEADERS = {
         'standard':    0x04358394,  # tprv
