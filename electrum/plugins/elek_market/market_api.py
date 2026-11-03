@@ -377,7 +377,7 @@ BTC_FAMILY = ("BTC", "TBTC", "RBTC")
 
 
 def default_price_for(rates: dict | None, base: str, rel: str) -> str:
-    """Default price recommendation for pair base/rel (§13 / fx.mjs parity):
+    """Default price recommendation for pair base/rel (sec 13 / fx.mjs parity):
     1. If rates has a valid mid for this pair, return that mid.
     2. If rates has usd and usd_per_btc and rel is in BTC_FAMILY:
        mid = usd / usd_per_btc (formatted up to 8 decimals).

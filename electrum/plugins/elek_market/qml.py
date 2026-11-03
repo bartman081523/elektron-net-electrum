@@ -237,7 +237,7 @@ class QMarketSignalObject(PluginQObject):
         """#96 truth source: the user's own kdf book mid (rates_from_book,
         snapshot source 'local-kdf'). If the book is empty, falls back to the
         network rates snapshot (electrs blockchain.fx.rates RPC or elek-web/Render
-        /fx/rates.json), deriving mid from usd/usd_per_btc for BTC pairs (§13)."""
+        /fx/rates.json), deriving mid from usd/usd_per_btc for BTC pairs (sec 13)."""
         import asyncio as _asyncio
         from electrum.util import get_asyncio_loop
         loop = get_asyncio_loop()
